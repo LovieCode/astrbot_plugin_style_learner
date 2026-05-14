@@ -136,15 +136,9 @@ class JargonMiner:
         if not contexts:
             return
         context_text = "\n".join(contexts[-5:])
-        prompt = (
-            f"词条内容: {content}\n\n"
-            f"该词条出现的上下文:\n{context_text}\n\n"
-            f'请推断"{content}"的含义。\n'
-            f"- 如果是在上下文中有特定含义的网络用语/缩写/黑话，请解释其含义\n"
-            f"- 如果是常规词汇，也请说明\n"
-            f'- 如果信息不足无法推断，请设置 "no_info": true\n\n'
-            f"以 JSON 格式输出:\n"
-            f'{{"meaning": "含义说明", "no_info": false}}'
+        prompt = get_prompt("inference").format(
+            content=content,
+            contexts=context_text,
         )
         try:
             resp = await self._llm_caller(prompt)

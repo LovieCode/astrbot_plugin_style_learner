@@ -17,6 +17,7 @@ from .models import get_db
 from .recorder import MessageRecorder
 from .selector import ExpressionSelector
 from .utils import filter_text
+from .prompt_manager import get_prompt
 from .auto_check import ExpressionAutoCheckTask
 
 
@@ -394,13 +395,7 @@ class StyleLearnerPlugin(Star):
         jargon_list = self.explainer.match_from_text(user_text, chat_id)[:5]
         # 获取聊天上下文（最近消息）供 classic 模式分析
         chat_observe_info = ""
-        style_instruction = (
-            "- 请不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，at或 @等)，只输出发言内容就好\n"
-            "- 给出日常且口语化的回复，尽量简短一些\n"
-            "- 不要回复的太有条理\n"
-            "- 最好一次对一个话题进行回复"
-        )
-        req.extra_user_content_parts.append(TextPart(text=style_instruction))
+        req.extra_user_content_parts.append(TextPart(text=get_prompt("style")))
         hint = await self.selector.build_hint(
             chat_id=chat_id,
             user_text=user_text,

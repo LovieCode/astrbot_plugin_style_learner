@@ -16,24 +16,7 @@ from typing import Callable
 from astrbot.api import logger
 
 from .models import get_db
-
-
-CHECK_PROMPT = """请评估以下表达方式是否合适。每条表达包含"使用情景"和"表达方式"。
-
-评估标准：
-1. 表达方式与使用情景是否匹配
-2. 可以容忍口语化
-3. 不能太过特指，需要具有泛用性
-4. 一般不涉及具体人名
-
-逐条评估，以 JSON 数组格式输出：
-[
-  {{"id": 1, "suitable": true, "reason": "合理，日常表达"}},
-  {{"id": 2, "suitable": false, "reason": "太特指了"}}
-]
-
-待评估的表达式列表：
-{items}"""
+from .prompt_manager import get_prompt
 
 
 class ExpressionAutoCheckTask:
@@ -100,7 +83,7 @@ class ExpressionAutoCheckTask:
             items_lines.append(
                 f"{i}. 使用情景：{expr['situation']}   表达方式：{expr['style']}"
             )
-        prompt = CHECK_PROMPT.format(items="\n".join(items_lines))
+        prompt = get_prompt("check").format(items="\n".join(items_lines))
 
         try:
             resp = await self._llm_caller(prompt)

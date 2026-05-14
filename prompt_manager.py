@@ -119,23 +119,22 @@ _DEFAULT_PROMPTS = {
 }}
 """,
 
-    "check": """请评估以下表达方式或语言风格以及使用条件或使用情景是否合适：
-使用条件或使用情景：{situation}
-表达方式或言语风格：{style}
+    "check": """请评估以下表达方式是否合适。每条表达包含"使用情景"和"表达方式"。
 
-请从以下方面进行评估：
-1. 表达方式或言语风格是否与使用条件或使用情景匹配
-2. 允许部分语法错误或口头化或缺省出现
-3. 表达方式不能太过特指，需要具有泛用性
-4. 一般不涉及具体的人名或名称
+评估标准：
+1. 表达方式与使用情景是否匹配
+2. 可以容忍口语化
+3. 不能太过特指，需要具有泛用性
+4. 一般不涉及具体人名
 
-请以JSON格式输出评估结果：
-{{
-    "suitable": true/false,
-    "reason": "评估理由（如果不合适，请说明原因）"
-}}
-如果合适，suitable设为true；如果不合适，suitable设为false，并在reason中说明原因。
-请严格按照JSON格式输出，不要包含其他内容。""",
+逐条评估，以 JSON 数组格式输出：
+[
+  {{"id": 1, "suitable": true, "reason": "合理，日常表达"}},
+  {{"id": 2, "suitable": false, "reason": "太特指了"}}
+]
+
+待评估的表达式列表：
+{items}""",
 
     "summarize": """聊天内容:
 {chat_text}
@@ -145,6 +144,11 @@ _DEFAULT_PROMPTS = {
 
 请将这些黑话解释整理成简洁的一段话，适合作为回复参考。直接输出平文本，不要格式：
 """,
+
+    "style": """- 请不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，at或 @等)，只输出发言内容就好
+- 给出日常且口语化的回复，尽量简短一些
+- 不要回复的太有条理
+- 最好一次对一个话题进行回复""",
 }
 
 _PROMPT_META = {
@@ -187,10 +191,9 @@ _PROMPT_META = {
     },
     "check": {
         "name": "表达检查 Prompt",
-        "description": "评估表达方式是否合适（自动审核）",
+        "description": "批量评估表达方式是否合适（自动审核）",
         "variables": [
-            {"name": "{situation}", "desc": "待评估的表达情境描述"},
-            {"name": "{style}", "desc": "待评估的表达风格/句式"},
+            {"name": "{items}", "desc": "待评估的表达式列表（每行一条，包含编号、使用情景、表达方式）"},
         ],
     },
     "summarize": {
@@ -200,6 +203,11 @@ _PROMPT_META = {
             {"name": "{chat_text}", "desc": "当前聊天内容（截取前200字）"},
             {"name": "{explanations}", "desc": "已匹配到的黑话解释列表（每行一条）"},
         ],
+    },
+    "style": {
+        "name": "回复风格 Prompt",
+        "description": "注入 LLM 的回复风格约束，控制 bot 的输出格式和语气",
+        "variables": [],
     },
 }
 
@@ -229,7 +237,7 @@ def get_all_prompts() -> list[dict]:
     """获取所有 Prompt 列表（含默认值和自定义值、元信息）"""
     db = get_db()
     result = []
-    for key in ["learn", "selection", "inference", "compare", "check", "summarize"]:
+    for key in ["learn", "selection", "inference", "compare", "check", "summarize", "style"]:
         meta = _PROMPT_META.get(key, {})
         default = _DEFAULT_PROMPTS.get(key, "")
         custom = db.get_setting(f"prompt_{key}")
