@@ -1,0 +1,170 @@
+{
+  "enable_expression_learning": {
+    "type": "bool",
+    "description": "启用表达学习",
+    "hint": "从群聊消息中自动学习用户的表达方式和语言风格",
+    "default": true
+  },
+  "enable_jargon_mining": {
+    "type": "bool",
+    "description": "启用黑话挖掘",
+    "hint": "自动识别群聊中的黑话/俚语/网络缩写，并推断其含义",
+    "default": true
+  },
+  "injection_mode": {
+    "type": "string",
+    "description": "注入模式",
+    "hint": "append=追加到用户消息末尾，tool=通过 LLM 工具调用注入，both=两者同时",
+    "options": [
+      "append",
+      "tool",
+      "both"
+    ],
+    "labels": [
+      "追加到消息末尾",
+      "LLM 工具调用",
+      "两者同时"
+    ],
+    "default": "append"
+  },
+  "selection_mode": {
+    "type": "string",
+    "description": "表达选择模式",
+    "hint": "simple=情绪匹配权重抽样（快速省 token），classic=随机候选池+LLM 双层选择（更精准但费 token）",
+    "options": [
+      "simple",
+      "classic"
+    ],
+    "labels": [
+      "简单模式 (情绪权重)",
+      "Classic 模式 (LLM 选择)"
+    ],
+    "default": "simple"
+  },
+  "min_messages_for_learning": {
+    "type": "int",
+    "description": "学习触发阈值",
+    "hint": "缓存多少条用户消息后触发一次学习",
+    "default": 100,
+    "minimum": 10,
+    "slider": {
+      "min": 10,
+      "max": 1000,
+      "step": 5
+    }
+  },
+  "learning_interval_minutes": {
+    "type": "int",
+    "description": "学习间隔（分钟）",
+    "hint": "两次学习之间的最小间隔，避免频繁调用 LLM",
+    "default": 60,
+    "minimum": 10,
+    "slider": {
+      "min": 0,
+      "max": 1440,
+      "step": 10
+    }
+  },
+  "expression_checked_only": {
+    "type": "bool",
+    "description": "仅用审核通过的表达",
+    "hint": "开启后只注入已通过审核的表达方式，适合正式使用场景",
+    "default": false
+  },
+  "all_global_jargon": {
+    "type": "bool",
+    "description": "黑话全局共享",
+    "hint": "开启后所有群聊共享同一套黑话库，关闭则每个群独立",
+    "default": false
+  },
+  "all_global_expressions": {
+    "type": "bool",
+    "description": "表达方式全局共享",
+    "hint": "开启后所有群聊共享同一套表达方式库，关闭则每个群独立。建议开启以避免不同群聊/私聊中学习到的表达方式无法跨会话使用",
+    "default": false
+  },
+  "expression_groups": {
+    "type": "list",
+    "description": "表达方式跨群共享组",
+    "hint": "配置群聊分组，同一组内的群聊共享表达方式库。每个分组是一个群聊 ID 列表。格式: [[\"chat_id_1\",\"chat_id_2\"],[\"chat_id_3\"]]",
+    "default": []
+  },
+  "expression_auto_check_enabled": {
+    "type": "bool",
+    "description": "启用自动审核",
+    "hint": "后台定时自动审核未检查的表达方式（使用 LLM 评估）",
+    "default": true
+  },
+  "expression_auto_check_interval": {
+    "type": "int",
+    "description": "自动审核间隔（秒）",
+    "hint": "每次自动审核之间的间隔秒数",
+    "default": 300,
+    "minimum": 60,
+    "slider": {
+      "min": 60,
+      "max": 3600,
+      "step": 60
+    }
+  },
+  "expression_auto_check_count": {
+    "type": "int",
+    "description": "每次审核数量",
+    "hint": "每次自动审核检查多少条表达方式",
+    "default": 5,
+    "minimum": 1,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "llm_model_override": {
+    "type": "string",
+    "description": "全局模型覆盖",
+    "hint": "所有任务共用此模型（为空则使用系统默认）",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "learner_model_override": {
+    "type": "string",
+    "description": "学习模型",
+    "hint": "表达提取任务专用模型，为空则回退到全局覆盖或系统默认",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "selection_model_override": {
+    "type": "string",
+    "description": "选择模型",
+    "hint": "表达选择 (classic 模式) 专用模型，为空则回退",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "check_model_override": {
+    "type": "string",
+    "description": "审核模型",
+    "hint": "表达审核/反思任务专用模型，为空则回退",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "infer_model_override": {
+    "type": "string",
+    "description": "推断模型",
+    "hint": "黑话含义推断专用模型，为空则回退",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "operator_chat_id": {
+    "type": "string",
+    "description": "管理员会话 ID",
+    "hint": "unified_msg_origin 格式，如 aiocqhttp:friend_12345。用于接收表达审核提问，为空则禁用反思功能",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "bot_name": {
+    "type": "string",
+    "description": "Bot 名称",
+    "hint": "LLM prompt 中的自我介绍名称。为空则自动使用平台 display_name 或默认 \"Bot\"",
+    "default": ""
+  }
+}

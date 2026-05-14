@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>表达风格学习 — Style Learner</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+
+<body>
+  <div id="app">
+    <header>
+      <div class="header-row">
+        <a id="avatar-link" href="https://github.com/AstrBotDevs/astrbot" target="_blank" rel="noopener noreferrer"
+          class="avatar-wrap" title="前往 GitHub">
+          <img id="avatar-img" class="avatar" src="avatar.png" alt="avatar"
+            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+            onload="this.style.display='block';this.nextElementSibling.style.display='none'">
+          <div class="avatar-placeholder" style="display:flex">🌸</div>
+        </a>
+        <div class="header-text">
+          <h1>表达风格学习</h1>
+          <p class="header-subtitle">从群聊中学习表达方式与黑话，按情绪分类注入回复风格</p>
+        </div>
+      </div>
+      <nav role="tablist" aria-label="功能导航">
+        <button class="tab-btn active" data-tab="expressions" role="tab" aria-selected="true"><i data-lucide="list"></i> 表达列表</button>
+        <button class="tab-btn" data-tab="jargons" role="tab" aria-selected="false"><i data-lucide="book-open"></i> 黑话管理</button>
+        <button class="tab-btn" data-tab="stats" role="tab" aria-selected="false"><i data-lucide="bar-chart-3"></i> 统计</button>
+        <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false"><i data-lucide="settings"></i> 设置</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="tab-expressions" class="tab-pane active" role="tabpanel" aria-label="表达列表">
+        <div class="toolbar">
+          <select id="emotion-filter" aria-label="按情绪筛选">
+            <option value="all">🎭 全部情绪</option>
+            <option value="开心">😊 开心</option>
+            <option value="惊讶">😲 惊讶</option>
+            <option value="无奈">😮‍💨 无奈</option>
+            <option value="嘲讽">😏 嘲讽</option>
+            <option value="鼓励">💪 鼓励</option>
+            <option value="生气">😠 生气</option>
+            <option value="悲伤">😢 悲伤</option>
+            <option value="撒娇">🥺 撒娇</option>
+            <option value="认真">🤔 认真</option>
+            <option value="好奇">🧐 好奇</option>
+            <option value="困惑">😵 困惑</option>
+            <option value="恐惧">😨 恐惧</option>
+            <option value="嫌弃">🤢 嫌弃</option>
+            <option value="得意">😎 得意</option>
+            <option value="尴尬">😅 尴尬</option>
+            <option value="期待">🤩 期待</option>
+            <option value="neutral">😐 neutral</option>
+          </select>
+          <select id="status-filter" aria-label="按审核状态筛选">
+            <option value="">🎭 全部状态</option>
+            <option value="pending">⏳ 待审核</option>
+            <option value="approved">✅ 已通过</option>
+            <option value="rejected">❌ 已拒绝</option>
+          </select>
+          <select id="chat-filter" aria-label="按群聊筛选">
+            <option value="">💬 全部群</option>
+          </select>
+          <button id="refresh-expr-btn" class="btn-ghost" aria-label="刷新表达列表"><i data-lucide="refresh-cw"></i> 刷新</button>
+        </div>
+        <div id="expr-list" class="item-list" role="list"></div>
+        <div id="expr-pagination" class="pagination" role="navigation" aria-label="分页"></div>
+      </section>
+
+      <section id="tab-jargons" class="tab-pane" role="tabpanel" aria-label="黑话管理">
+        <div class="toolbar">
+          <input type="text" id="jargon-search" placeholder="搜索黑话词条..." aria-label="搜索黑话">
+          <button id="refresh-jargon-btn" class="btn-ghost" aria-label="刷新黑话列表"><i data-lucide="refresh-cw"></i> 刷新</button>
+        </div>
+        <div id="jargon-list" class="item-list" role="list"></div>
+        <div id="jargon-pagination" class="pagination" role="navigation" aria-label="分页"></div>
+      </section>
+
+      <section id="tab-stats" class="tab-pane" role="tabpanel" aria-label="统计">
+        <div id="stats-content"></div>
+      </section>
+
+      <section id="tab-settings" class="tab-pane" role="tabpanel" aria-label="设置">
+        <div id="settings-form"></div>
+        <button id="save-settings-btn" class="btn-primary"><i data-lucide="save"></i> 保存设置</button>
+        <div id="save-msg" role="status" aria-live="polite"></div>
+        <hr class="divider">
+        <h3 class="section-title"><i data-lucide="file-text"></i> Prompt 模板</h3>
+        <p class="section-hint">可自定义 LLM Prompt 模板，留空则使用默认值。变量请保留 <code>{'{}'}</code> 格式。</p>
+        <div id="prompts-form"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="false"></div>
+  <script src="app.js"></script>
+</body>
+
+</html>

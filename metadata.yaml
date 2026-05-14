@@ -1,0 +1,12 @@
+name: astrbot_plugin_style_learner
+display_name: 表达风格学习
+desc: 从群聊中学习表达方式与黑话，按情绪分类注入回复风格。
+version: v1.0.0
+author: AstrBot Community
+repo: https://github.com/AstrBotDevs/astrbot
+astrbot_version: ">=4.16,<5"
+tags:
+  - learning
+  - style
+  - jargon
+  - emotion
