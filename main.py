@@ -448,52 +448,49 @@ class StyleLearnerPlugin(Star):
     # ── Commands ──
 
     @filter.command("style")
-    async def style_cmd(self, event: AstrMessageEvent):
-        yield event.plain_result(
-            "🎭 表达风格学习插件\n"
-            "用法：\n"
-            "/style list [情绪] - 查看表达列表\n"
-            "/style stats - 查看学习统计"
-        )
-
-    @filter.command("style", sub_command="list")
-    async def style_list(self, event: AstrMessageEvent, emotion: str = "all"):
-        chat_id = event.unified_msg_origin or ""
-        db = get_db()
-        exprs, total = db.get_expressions(
-            chat_id=chat_id,
-            emotion=emotion if emotion != "all" else None,
-            page=1,
-            page_size=10,
-        )
-        if not exprs:
-            yield event.plain_result("暂无表达数据。")
-            return
-        lines = [f"📝 表达列表（共{total}条，情绪:{emotion}）", ""]
-        for e in exprs[:10]:
-            lines.append(
-                f"[{e.get('emotion', '?')}] {e['situation']} → {e['style']} (次数:{e['count']})"
+    async def style_cmd(self, event: AstrMessageEvent, action: str = "", emotion: str = "all"):
+        if action == "list":
+            chat_id = event.unified_msg_origin or ""
+            db = get_db()
+            exprs, total = db.get_expressions(
+                chat_id=chat_id,
+                emotion=emotion if emotion != "all" else None,
+                page=1,
+                page_size=10,
             )
-        yield event.plain_result("\n".join(lines))
-
-    @filter.command("style", sub_command="stats")
-    async def style_stats(self, event: AstrMessageEvent):
-        db = get_db()
-        stats = db.get_statistics()
-        lines = [
-            "📊 学习统计",
-            f"表达方式: {stats['total_expressions']} 条",
-            f"  已审核: {stats['checked_expressions']} 条",
-            f"  已拒绝: {stats['rejected_expressions']} 条",
-            f"黑话: {stats['total_jargons']} 条 (有含义: {stats['jargons_with_meaning']})",
-            f"群组数: {stats['chat_group_count']}",
-            "",
-            "📈 情绪分布:",
-        ]
-        for em, cnt in stats.get("emotion_distribution", {}).items():
-            bar = "█" * min(cnt, 20)
-            lines.append(f"  {em}: {bar} {cnt}")
-        yield event.plain_result("\n".join(lines))
+            if not exprs:
+                yield event.plain_result("暂无表达数据。")
+                return
+            lines = [f"📝 表达列表（共{total}条，情绪:{emotion}）", ""]
+            for e in exprs[:10]:
+                lines.append(
+                    f"[{e.get('emotion', '?')}] {e['situation']} → {e['style']} (次数:{e['count']})"
+                )
+            yield event.plain_result("\n".join(lines))
+        elif action == "stats":
+            db = get_db()
+            stats = db.get_statistics()
+            lines = [
+                "📊 学习统计",
+                f"表达方式: {stats['total_expressions']} 条",
+                f"  已审核: {stats['checked_expressions']} 条",
+                f"  已拒绝: {stats['rejected_expressions']} 条",
+                f"黑话: {stats['total_jargons']} 条 (有含义: {stats['jargons_with_meaning']})",
+                f"群组数: {stats['chat_group_count']}",
+                "",
+                "📈 情绪分布:",
+            ]
+            for em, cnt in stats.get("emotion_distribution", {}).items():
+                bar = "█" * min(cnt, 20)
+                lines.append(f"  {em}: {bar} {cnt}")
+            yield event.plain_result("\n".join(lines))
+        else:
+            yield event.plain_result(
+                "🎭 表达风格学习插件\n"
+                "用法：\n"
+                "/style list [情绪] - 查看表达列表\n"
+                "/style stats - 查看学习统计"
+            )
 
     # ── LLM Tools ──
 
