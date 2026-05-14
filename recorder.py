@@ -38,15 +38,19 @@ class MessageRecorder:
         self._learning_callbacks.append(callback)
 
     def record(self, chat_id: str, role: str, text: str,
-               sender_name: str = "", timestamp: float | None = None):
-        if not text or not text.strip():
+               sender_name: str = "", timestamp: float | None = None,
+               images: list[str] | None = None):
+        if (not text or not text.strip()) and not images:
             return
-        self._buffers[chat_id].append({
+        entry = {
             "role": role,
             "sender_name": sender_name,
-            "text": text.strip(),
+            "text": text.strip() if text else "",
             "time": timestamp or time.time(),
-        })
+        }
+        if images:
+            entry["images"] = images
+        self._buffers[chat_id].append(entry)
         self._save_to_db(chat_id)
         self._maybe_trigger(chat_id)
 

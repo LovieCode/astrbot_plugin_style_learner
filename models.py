@@ -552,11 +552,32 @@ _db: Database | None = None
 def get_db() -> Database:
     global _db
     if _db is None:
-        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+        import shutil
 
-        db_dir = (
-            Path(get_astrbot_data_path()) / "plugins" / "astrbot_plugin_style_learner"
+        from astrbot.core.utils.astrbot_path import (
+            get_astrbot_data_path,
+            get_astrbot_plugin_data_path,
         )
-        _db = Database(db_dir / "data.db")
+
+        old_db_dir = (
+            Path(get_astrbot_data_path())
+            / "plugins"
+            / "astrbot_plugin_style_learner"
+        )
+        new_db_dir = Path(get_astrbot_plugin_data_path()) / "astrbot_plugin_style_learner"
+        old_db = old_db_dir / "data.db"
+        new_db = new_db_dir / "data.db"
+
+        # 迁移旧 DB 到新的 plugin_data 目录
+        if old_db.exists() and not new_db.exists():
+            new_db_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(old_db), str(new_db))
+            # 同时迁移 WAL 文件
+            for suffix in ("-wal", "-shm"):
+                old_wal = Path(str(old_db) + suffix)
+                if old_wal.exists():
+                    shutil.copy2(str(old_wal), str(new_db) + suffix)
+
+        _db = Database(new_db)
         _db.connect()
     return _db

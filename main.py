@@ -1,5 +1,7 @@
+import asyncio
 import json
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from .recorder import MessageRecorder
 from .selector import ExpressionSelector
 from .utils import filter_text
 from .prompt_manager import get_prompt
+from .api import ApiRouter
 from .auto_check import ExpressionAutoCheckTask
 
 
@@ -41,6 +44,10 @@ class StyleLearnerPlugin(Star):
         self.reflector: ExpressionReflector | None = None
         self.auto_check: ExpressionAutoCheckTask | None = None
         self._bot_name = "Bot"
+        self._recent_messages: dict[str, deque] = {}
+        self._image_captions: dict[str, str] = {}
+        self._last_llm_time: dict[str, float] = {}
+        self._last_message_ts: dict[str, float] = {}
         self._cron_registered = False
         self._reflector_cron_registered = False
         self._cron_jobs: list[str] = []
@@ -95,6 +102,37 @@ class StyleLearnerPlugin(Star):
         self.recorder = MessageRecorder(
             min_messages=min_msgs, min_interval=min_int, db=get_db()
         )
+        # 从 recorder DB 中加载已有的缓冲消息到 ring buffer
+        bot_label = f"{self._bot_name}（你）"
+        for cid, msgs in self.recorder._buffers.items():
+            buf = deque(maxlen=200)
+            for m in msgs:
+                sender = m.get("sender_name", m.get("role", "?"))
+                if m.get("role") == "assistant":
+                    sender = bot_label
+                raw_images = m.get("images", [])
+                images = []
+                for img in raw_images:
+                    if isinstance(img, str):
+                        images.append({
+                            "url": img,
+                            "caption": self._image_captions.get(img, None),
+                        })
+                    elif isinstance(img, dict):
+                        img_url = img.get("url", "")
+                        if img_url and img_url in self._image_captions:
+                            img["caption"] = self._image_captions[img_url]
+                        images.append(img)
+                buf.append({
+                    "role": m.get("role", "user"),
+                    "sender": sender,
+                    "text": m.get("text", ""),
+                    "images": images,
+                })
+            self._recent_messages[cid] = buf
+        if self._recent_messages:
+            total = sum(len(v) for v in self._recent_messages.values())
+            logger.info(f"StyleLearner: seeded recent messages for {len(self._recent_messages)} chats ({total} msgs)")
         self.recorder.on_learning_ready(self._on_learning_ready)
         # 根据注入模式开关 LLM 工具
         injection_mode = cfg.get("injection_mode", "append")
@@ -110,7 +148,7 @@ class StyleLearnerPlugin(Star):
 
         await self._register_cron()
         await self._register_reflector_cron()
-        await self._register_web_apis()
+        ApiRouter(self).register()
         # 修复已存在的配置中 expression_groups 类型错误（string → list）
         if isinstance(self.config, dict) and isinstance(
             self.config.get("expression_groups"), str
@@ -147,6 +185,11 @@ class StyleLearnerPlugin(Star):
             "check_model_override": "",
             "infer_model_override": "",
             "operator_chat_id": "",
+            "max_context_turns": 1,
+            "context_recent_messages_count": 0,
+            "context_include_images": True,
+            "guard_enabled": True,
+            "debounce_seconds": 0.5,
             "bot_name": "",
         }
         if isinstance(self.config, dict) and self.config:
@@ -317,6 +360,80 @@ class StyleLearnerPlugin(Star):
 
         asyncio.create_task(self._run_learning(chat_id, messages))
 
+    def _build_chat_observe_info(self, chat_id: str) -> str:
+        """构建聊天观察信息：将最近的消息格式化为供 classic 模式选择器使用的上下文文本"""
+        if chat_id not in self._recent_messages:
+            return ""
+        recent = list(self._recent_messages[chat_id])
+        if not recent:
+            return ""
+        ctx_recent_count = 15
+        recent = recent[-ctx_recent_count:]
+        lines = []
+        for m in recent:
+            sender = m.get("sender", m.get("role", "?"))
+            text = m.get("text", "")
+            line = f"{sender}: {text}"
+            images = m.get("images", [])
+            if images:
+                captions = [img.get("caption") for img in images if img.get("caption")]
+                if captions:
+                    line += " [图片: " + "; ".join(captions) + "]"
+                else:
+                    line += " [图片]"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _extract_images(self, event: AstrMessageEvent) -> list[dict]:
+        images = []
+        for comp in event.get_messages():
+            if hasattr(comp, "type") and str(comp.type) == "Image":
+                url = getattr(comp, "url", "") or ""
+                file = getattr(comp, "file", "") or ""
+                img_url = url or file or ""
+                if img_url:
+                    caption = self._image_captions.get(img_url, None)
+                    images.append({"url": img_url, "caption": caption})
+                else:
+                    images.append({"url": "[图片]", "caption": None})
+        return images
+
+    async def _generate_image_captions(self, images: list[dict]):
+        try:
+            bot_cfg = self.context.get_config()
+            prov_id = bot_cfg.get("provider_settings", {}).get(
+                "default_image_caption_provider_id", ""
+            )
+            if not prov_id:
+                return
+            provider = self.context.get_provider_by_id(prov_id)
+            if not provider:
+                return
+            prompt = bot_cfg.get("provider_settings", {}).get(
+                "image_caption_prompt", "Please describe the image using Chinese."
+            )
+            for img_info in images:
+                img_url = img_info["url"]
+                if img_url == "[图片]" or img_url in self._image_captions:
+                    continue
+                try:
+                    resp = await provider.text_chat(
+                        prompt=prompt, image_urls=[img_url]
+                    )
+                    caption = (resp.completion_text or "").strip()
+                    if caption:
+                        self._image_captions[img_url] = caption
+                        img_info["caption"] = caption
+                        logger.info(
+                            f"StyleLearner: image caption generated for {img_url[:60]}..."
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"StyleLearner: image caption failed: {e}"
+                    )
+        except Exception as e:
+            logger.warning(f"StyleLearner: image caption setup failed: {e}")
+
     async def _run_learning(self, chat_id: str, messages: list[dict]) -> list[dict]:
         """执行学习，返回本次学到的新条目列表"""
         cfg = await self._get_config()
@@ -341,8 +458,13 @@ class StyleLearnerPlugin(Star):
     async def on_message(self, event: AstrMessageEvent):
         umo = event.unified_msg_origin or ""
         user_text = event.message_str or ""
-        if not user_text.strip():
+        images = self._extract_images(event)
+        if not user_text.strip() and not images:
             return
+        # 记录消息到达时间，用于 debounce"最后一条不跳过"的判断
+        now = time.time()
+        event.set_extra("_msg_arrival_ts", now)
+        self._last_message_ts[umo] = now
         if not self.recorder:
             return
         sender_name = event.get_sender_name() or ""
@@ -359,7 +481,17 @@ class StyleLearnerPlugin(Star):
             chat_name = sender_name or umo.split(":")[-1] if umo else ""
         if chat_name and chat_name != umo:
             get_db().cache_chat_name(umo, chat_name)
-        self.recorder.record(umo, "user", user_text, sender_name=sender_name)
+        self.recorder.record(umo, "user", user_text, sender_name=sender_name, images=images)
+        if umo not in self._recent_messages:
+            self._recent_messages[umo] = deque(maxlen=200)
+        msg_entry = {
+            "role": "user", "sender": sender_name, "text": user_text,
+        }
+        if images:
+            msg_entry["images"] = images
+        self._recent_messages[umo].append(msg_entry)
+        if images:
+            asyncio.create_task(self._generate_image_captions(msg_entry["images"]))
         # 处理管理员审核回复
         if self.reflector and self.reflector._operator_chat_id:
             if umo == self.reflector._operator_chat_id:
@@ -381,6 +513,33 @@ class StyleLearnerPlugin(Star):
         injection_mode = cfg.get("injection_mode", "append")
         checked_only = cfg.get("expression_checked_only", False)
         selection_mode = cfg.get("selection_mode", "classic")
+
+        # 确保时间戳字段已设置（on_message 不一定每次都会跑）
+        arrival_ts = event.get_extra("_msg_arrival_ts", None)
+        if arrival_ts is None:
+            arrival_ts = time.time()
+            event.set_extra("_msg_arrival_ts", arrival_ts)
+
+        # 防抖 + 半句话保护
+        #  1) 有更新消息到达 → 跳过
+        #  2) 消息太新（< debounce 秒）→ 补眠等连发到齐
+        debounce = cfg.get("debounce_seconds", 0)
+        if debounce > 0:
+            last_msg = self._last_message_ts.get(chat_id, 0.0)
+            if last_msg > arrival_ts:
+                logger.debug(f"StyleLearner: debounce skip (newer msg) for {chat_id}")
+                event.clear_result()
+                return
+            # 没有更新消息但消息太新 → 用户可能还在敲字
+            age = time.time() - last_msg
+            if age < debounce:
+                await asyncio.sleep(debounce - age)
+                if self._last_message_ts.get(chat_id, 0.0) > arrival_ts:
+                    logger.debug(f"StyleLearner: debounce skip (post-sleep) for {chat_id}")
+                    event.clear_result()
+                    return
+        self._last_llm_time[chat_id] = time.time()
+
         if not self.selector or not self.explainer:
             logger.warning(
                 "StyleLearner on_llm_request: selector or explainer not initialized"
@@ -391,11 +550,33 @@ class StyleLearnerPlugin(Star):
                 f"StyleLearner on_llm_request: injection_mode={injection_mode}, skipping"
             )
             return
+        # 裁剪对话历史：保留最近 N 轮 user+assistant 对话
+        # style injection 已注入到 extra_user_content_parts，过期的历史对话冗余
+        max_turns = cfg.get("max_context_turns", 0)
+        if max_turns == 0:
+            req.contexts.clear()
+            logger.debug(f"StyleLearner: cleared all history for {chat_id}")
+        elif max_turns > 0 and len(req.contexts) > 0:
+            user_count = 0
+            cutoff = 0
+            for i in range(len(req.contexts) - 1, -1, -1):
+                if req.contexts[i].get("role") == "user":
+                    user_count += 1
+                    if user_count > max_turns:
+                        cutoff = i + 1
+                        break
+            if cutoff > 0:
+                req.contexts = req.contexts[cutoff:]
+                logger.debug(
+                    f"StyleLearner: trimmed history to last {max_turns} turns "
+                    f"({len(req.contexts)} msgs) for {chat_id}"
+                )
+
         # 匹配黑话
         jargon_list = self.explainer.match_from_text(user_text, chat_id)[:5]
         # 获取聊天上下文（最近消息）供 classic 模式分析
-        chat_observe_info = ""
-        req.extra_user_content_parts.append(TextPart(text=get_prompt("style")))
+        chat_observe_info = self._build_chat_observe_info(chat_id)
+        req.extra_user_content_parts.append(TextPart(text=get_prompt("style")).mark_as_temp())
         hint = await self.selector.build_hint(
             chat_id=chat_id,
             user_text=user_text,
@@ -406,7 +587,7 @@ class StyleLearnerPlugin(Star):
             chat_observe_info=chat_observe_info,
         )
         if hint:
-            req.extra_user_content_parts.append(TextPart(text=hint))
+            req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
             logger.info(
                 f"StyleLearner on_llm_request: injected hint ({len(hint)} chars) for {chat_id}"
             )
@@ -425,6 +606,44 @@ class StyleLearnerPlugin(Star):
                 f"injection_mode={injection_mode}, selection_mode={selection_mode})"
             )
 
+        # 注入最近 N 条聊天消息作为上下文（放在最后，确保在用户消息尾部）
+        ctx_count = cfg.get("context_recent_messages_count", 0)
+        if ctx_count > 0 and chat_id in self._recent_messages:
+            recent = list(self._recent_messages[chat_id])[-ctx_count:]
+            if recent:
+                lines = [
+                    f"你是群聊中的一员。以下是最新的聊天记录，"
+                    "请根据上下文判断是否需要回复。\n"
+                ]
+                for m in recent:
+                    sender = m.get("sender", m.get("role", "?"))
+                    text = m.get("text", "")
+                    if m.get("role") == "assistant":
+                        line = f"[你]: {text}"
+                    else:
+                        line = f"[聊天] {sender}: {text}"
+                    images = m.get("images", [])
+                    if images:
+                        captions = [img.get("caption") for img in images if img.get("caption")]
+                        if captions:
+                            line += " [图片: " + "; ".join(captions) + "]"
+                        else:
+                            line += " [图片]"
+                    lines.append(line)
+                req.extra_user_content_parts.append(
+                    TextPart(text="\n".join(lines)).mark_as_temp()
+                )
+                logger.info(
+                    f"StyleLearner: injected {len(recent)} recent msgs as context for {chat_id}"
+                )
+
+        # 工具指令必须放在最最最尾部，LLM 对尾部指令遵循更好
+        req.extra_user_content_parts.append(
+            TextPart(
+                text="- 你必须使用 send_message_to_user 工具来发送消息给用户，不要直接输出文本。直接输出的文本会被系统拦截不会发送给用户"
+            ).mark_as_temp()
+        )
+
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, response):
         umo = event.unified_msg_origin or ""
@@ -438,6 +657,44 @@ class StyleLearnerPlugin(Star):
         if text.strip():
             self.recorder.record(
                 umo, "assistant", text.strip(), sender_name=self._bot_name
+            )
+            if umo not in self._recent_messages:
+                self._recent_messages[umo] = deque(maxlen=200)
+            self._recent_messages[umo].append({
+                "role": "assistant", "sender": f"{self._bot_name}（你）", "text": text.strip(),
+                "images": [],
+            })
+
+        # Guard：标记 LLM 是否通过 send_message_to_user 工具发送了消息
+        if hasattr(response, "tools_call_name") and "send_message_to_user" in (
+            response.tools_call_name or []
+        ):
+            event.set_extra("_tool_sent_message", True)
+
+        # Guard：标记 LLM 直接输出了文本而非通过工具发送 → 视为心里话
+        ct = (response.completion_text or "").strip()
+        if ct and not event.get_extra("_tool_sent_message"):
+            event.set_extra("_llm_heart_words", True)
+
+    @filter.on_decorating_result(priority=9999)
+    async def on_guard_result(self, event: AstrMessageEvent):
+        """内容守卫：在一切 on_decorating_result handler 之前运行。
+        - 如果 LLM 使用了 send_message_to_user 工具 → 剩余文本是心里话，清除
+        - 如果 LLM 直接输出了文本（没用工具）→ 那也是心里话，清除"""
+        cfg = await self._get_config()
+        if not cfg.get("guard_enabled", True):
+            return
+        tool_sent = event.get_extra("_tool_sent_message")
+        heart_words = event.get_extra("_llm_heart_words")
+        if tool_sent or heart_words:
+            result = event.get_result()
+            if result and result.chain:
+                result.chain.clear()
+            event.stop_event()
+            reason = "tool" if tool_sent else "heart_words"
+            logger.debug(
+                f"Guard: cleared remaining chain "
+                f"({reason} for {event.unified_msg_origin})"
             )
 
     # ── Commands ──
@@ -527,343 +784,6 @@ class StyleLearnerPlugin(Star):
         for m in matched:
             lines.append(f"- {m['content']}: {m.get('meaning', '含义待确认')}")
         return "\n".join(lines)
-
-    # ── WebUI API ──
-
-    async def _register_web_apis(self):
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/expressions",
-            self._api_get_expressions,
-            ["GET"],
-            "获取表达列表",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/expression/<int:expr_id>",
-            self._api_get_expression,
-            ["GET"],
-            "获取单个表达",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/expression/<int:expr_id>/check",
-            self._api_check_expression,
-            ["POST"],
-            "审核表达",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/expression/<int:expr_id>",
-            self._api_delete_expression,
-            ["POST"],
-            "删除表达",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/expression/<int:expr_id>/edit",
-            self._api_edit_expression,
-            ["POST"],
-            "编辑表达",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/jargons",
-            self._api_get_jargons,
-            ["GET"],
-            "获取黑话列表",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/jargon/<int:jargon_id>/meaning",
-            self._api_update_jargon_meaning,
-            ["POST"],
-            "编辑黑话含义",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/jargon/<int:jargon_id>",
-            self._api_delete_jargon,
-            ["POST"],
-            "删除黑话",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/jargon/<int:jargon_id>/check",
-            self._api_check_jargon,
-            ["POST"],
-            "审核黑话",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/statistics",
-            self._api_statistics,
-            ["GET"],
-            "获取学习统计",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/trigger-learn",
-            self._api_trigger_learn,
-            ["POST"],
-            "手动触发学习",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/chat-groups",
-            self._api_chat_groups,
-            ["GET"],
-            "获取群列表",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/known-chats",
-            self._api_known_chats,
-            ["GET"],
-            "获取已知会话列表（含名称），用于配置下拉选择",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/settings",
-            self._api_get_settings,
-            ["GET"],
-            "获取配置",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/settings",
-            self._api_update_settings,
-            ["POST"],
-            "更新配置",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/pending-messages",
-            self._api_pending_messages,
-            ["GET"],
-            "获取待学习消息",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/prompts",
-            self._api_get_prompts,
-            ["GET"],
-            "获取所有 Prompt 模板",
-        )
-        self.context.register_web_api(
-            "/astrbot_plugin_style_learner/prompts",
-            self._api_save_prompts,
-            ["POST"],
-            "保存 Prompt 模板",
-        )
-
-    async def _api_get_expressions(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
-        emotion = quart_request.args.get("emotion", "")
-        status = quart_request.args.get("status", "")
-        page = int(quart_request.args.get("page", 1))
-        page_size = int(quart_request.args.get("page_size", 20))
-        db = get_db()
-        exprs, total = db.get_expressions(
-            chat_id=chat_id if chat_id else None,
-            emotion=emotion if emotion and emotion != "all" else None,
-            status=status,
-            page=page,
-            page_size=page_size,
-        )
-        chat_ids = list({e.get("chat_id", "") for e in exprs})
-        name_map = db.get_chat_name_map(chat_ids)
-        for e in exprs:
-            e["_chat_name"] = name_map.get(e.get("chat_id", ""), "")
-        return {"success": True, "data": exprs, "total": total}
-
-    async def _api_get_expression(self, expr_id: int, *args, **kwargs):
-        """获取单条表达方式的详细信息"""
-        db = get_db()
-        expr = db.get_expression_by_id(expr_id)
-        if expr is None:
-            return {"success": False, "message": "表达方式不存在"}
-        return {"success": True, "data": expr}
-
-    async def _api_check_expression(self, expr_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
-        checked = body.get("checked", True)
-        rejected = body.get("rejected", False)
-        db = get_db()
-        db.check_expression(expr_id, checked, rejected)
-        return {"success": True}
-
-    async def _api_delete_expression(self, expr_id: int, *args, **kwargs):
-        db = get_db()
-        db.delete_expression(expr_id)
-        return {"success": True}
-
-    async def _api_edit_expression(self, expr_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
-        db = get_db()
-        db.update_expression(
-            expr_id,
-            **{k: v for k, v in body.items() if k in ("emotion", "situation", "style")},
-        )
-        return {"success": True}
-
-    async def _api_get_jargons(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
-        page = int(quart_request.args.get("page", 1))
-        page_size = int(quart_request.args.get("page_size", 20))
-        db = get_db()
-        jargons, total = db.get_jargons(
-            chat_id=chat_id if chat_id else None,
-            page=page,
-            page_size=page_size,
-        )
-        chat_ids = list({j.get("chat_id", "") for j in jargons})
-        name_map = db.get_chat_name_map(chat_ids)
-        for j in jargons:
-            j["_chat_name"] = name_map.get(j.get("chat_id", ""), "")
-        return {"success": True, "data": jargons, "total": total}
-
-    async def _api_update_jargon_meaning(self, jargon_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
-        meaning = body.get("meaning", "")
-        db = get_db()
-        db.update_jargon_meaning(jargon_id, meaning, is_jargon=True)
-        return {"success": True}
-
-    async def _api_check_jargon(self, jargon_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
-        rejected = body.get("rejected", False)
-        db = get_db()
-        db.conn.execute(
-            "UPDATE jargons SET rejected=? WHERE id=?",
-            (1 if rejected else 0, jargon_id),
-        )
-        db.conn.commit()
-        return {"success": True}
-
-    async def _api_delete_jargon(self, jargon_id: int, *args, **kwargs):
-        db = get_db()
-        db.delete_jargon(jargon_id)
-        return {"success": True}
-
-    async def _api_statistics(self, *args, **kwargs):
-        db = get_db()
-        return {"success": True, "data": db.get_statistics()}
-
-    async def _api_trigger_learn(self, *args, **kwargs):
-        if not self.recorder:
-            return {"success": False, "message": "插件未初始化"}
-        db = get_db()
-        results = []
-        for chat_id in self.recorder.get_all_chat_ids():
-            messages = self.recorder.get_buffered_messages(chat_id)
-            if not messages:
-                continue
-            chat_name = db.get_chat_name(chat_id) or chat_id
-            logger.info(
-                f"StyleLearner: manually triggering learning for {chat_id} ({chat_name}), {len(messages)} messages"
-            )
-            try:
-                items = await self._run_learning(chat_id, list(messages))
-            except Exception as e:
-                logger.error(f"StyleLearner: learning failed for {chat_id}: {e}")
-                results.append(
-                    {
-                        "chat_id": chat_id,
-                        "_chat_name": chat_name,
-                        "message_count": len(messages),
-                        "items": [],
-                        "error": str(e),
-                    }
-                )
-                continue
-            if items:
-                self.recorder.clear_buffer(chat_id)
-            results.append(
-                {
-                    "chat_id": chat_id,
-                    "_chat_name": chat_name,
-                    "message_count": len(messages),
-                    "items": items,
-                }
-            )
-        if not results:
-            return {"success": True, "message": "没有待学习的消息"}
-        total_items = sum(len(r["items"]) for r in results)
-        return {
-            "success": True,
-            "data": results,
-            "message": f"完成 {len(results)} 个群的学习，共学到 {total_items} 条",
-        }
-
-    async def _api_pending_messages(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
-        if not self.recorder:
-            return {"success": True, "data": []}
-        if chat_id:
-            msgs = self.recorder.get_buffered_messages(chat_id)
-            return {"success": True, "data": msgs, "total": len(msgs)}
-        summary = self.recorder.get_all_buffered_summary()
-        return {"success": True, "data": summary}
-
-    async def _api_chat_groups(self, *args, **kwargs):
-        db = get_db()
-        chat_ids = db.get_chat_groups()
-        name_map = db.get_chat_name_map(chat_ids)
-        data = []
-        for cid in chat_ids:
-            name = name_map.get(cid, "")
-            data.append({"chat_id": cid, "_chat_name": name})
-        return {"success": True, "data": data}
-
-    async def _api_known_chats(self, *args, **kwargs):
-        db = get_db()
-        chats = db.get_known_chats()
-        return {"success": True, "data": chats}
-
-    async def _api_get_settings(self, *args, **kwargs):
-        cfg = await self._get_config()
-        return {"success": True, "data": cfg}
-
-    async def _api_update_settings(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
-        if "expression_groups" in body:
-            val = body["expression_groups"]
-            if isinstance(val, str):
-                try:
-                    val = json.loads(val)
-                except (json.JSONDecodeError, TypeError):
-                    val = []
-            if not isinstance(val, list):
-                val = []
-            body["expression_groups"] = val
-        try:
-            self.config.update(body)
-            if hasattr(self.config, "save_config"):
-                self.config.save_config()
-            return {"success": True}
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-        return {"success": False, "message": "保存配置失败"}
-
-    async def _api_get_prompts(self, *args, **kwargs):
-        from .prompt_manager import get_all_prompts
-
-        return {"success": True, "data": get_all_prompts()}
-
-    async def _api_save_prompts(self, *args, **kwargs):
-        from quart import request as quart_request
-        from .prompt_manager import set_prompt, reset_prompt
-
-        body = await quart_request.get_json(silent=True) or {}
-        key = body.get("key", "")
-        value = body.get("value")
-        if not key:
-            return {"success": False, "message": "缺少 key 参数"}
-        if value is None or (isinstance(value, str) and not value.strip()):
-            reset_prompt(key)
-            return {"success": True, "message": f"Prompt '{key}' 已重置为默认值"}
-        set_prompt(key, value)
-        return {"success": True, "message": f"Prompt '{key}' 已保存"}
 
     async def terminate(self):
         logger.info("StyleLearner: terminating...")

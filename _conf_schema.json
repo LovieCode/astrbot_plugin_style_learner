@@ -119,6 +119,42 @@
       "step": 1
     }
   },
+  "guard_enabled": {
+    "type": "bool",
+    "description": "启用内容守卫",
+    "hint": "当 LLM 已通过工具发送消息时，自动抑制 pipeline 中残留的文本（防止 LLM 的内心独白被发出去）",
+    "default": true
+  },
+  "debounce_seconds": {
+    "type": "float",
+    "description": "防抖间隔（秒）",
+    "hint": "群聊短时间内多条消息连发时，跳过 LLM 调用。设为 0 关闭",
+    "default": 0.5,
+    "minimum": 0,
+    "slider": {
+      "min": 0,
+      "max": 30,
+      "step": 0.5
+    }
+  },
+  "context_recent_messages_count": {
+    "type": "int",
+    "description": "注入最近N条消息作为上下文",
+    "hint": "每次 LLM 请求时，将最近 N 条聊天消息（含其他群成员）注入到上下文中，帮助 LLM 理解当前语境。0=关闭",
+    "default": 0,
+    "minimum": 0,
+    "slider": {
+      "min": 0,
+      "max": 30,
+      "step": 1
+    }
+  },
+  "context_include_images": {
+    "type": "bool",
+    "description": "上下文注入包含图片信息",
+    "hint": "在注入到 LLM 的聊天上下文中标记图片信息（如\"[图片]\"），让 LLM 感知到群里发了图",
+    "default": true
+  },
   "llm_model_override": {
     "type": "string",
     "description": "全局模型覆盖",
@@ -160,6 +196,18 @@
     "hint": "unified_msg_origin 格式，如 aiocqhttp:friend_12345。用于接收表达审核提问，为空则禁用反思功能",
     "obvious_hint": true,
     "default": ""
+  },
+  "max_context_turns": {
+    "type": "int",
+    "description": "保留最近 N 轮对话",
+    "hint": "保留最近 N 组 user+assistant 对话记录在 context 中供 LLM 参考，用于多轮连续任务场景。0=全部清除，-1=保留全部，N>0=保留最近 N 轮",
+    "default": 1,
+    "minimum": -1,
+    "slider": {
+      "min": -1,
+      "max": 20,
+      "step": 1
+    }
   },
   "bot_name": {
     "type": "string",
