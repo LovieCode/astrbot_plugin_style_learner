@@ -15,6 +15,7 @@ data.db
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 

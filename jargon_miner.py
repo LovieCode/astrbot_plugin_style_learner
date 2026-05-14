@@ -136,7 +136,16 @@ class JargonMiner:
         if not contexts:
             return
         context_text = "\n".join(contexts[-5:])
-        prompt = get_prompt("inference").format(content=content, contexts=context_text)
+        prompt = (
+            f"词条内容: {content}\n\n"
+            f"该词条出现的上下文:\n{context_text}\n\n"
+            f'请推断"{content}"的含义。\n'
+            f"- 如果是在上下文中有特定含义的网络用语/缩写/黑话，请解释其含义\n"
+            f"- 如果是常规词汇，也请说明\n"
+            f'- 如果信息不足无法推断，请设置 "no_info": true\n\n'
+            f"以 JSON 格式输出:\n"
+            f'{{"meaning": "含义说明", "no_info": false}}'
+        )
         try:
             resp = await self._llm_caller(prompt)
         except Exception as e:
@@ -144,58 +153,28 @@ class JargonMiner:
             return
         if not resp:
             return
-        infer1 = self._parse_json(resp)
-        if not infer1:
+        infer = self._parse_json(resp)
+        if not infer:
             return
-        if infer1.get("no_info") or not infer1.get("meaning", "").strip():
+        if infer.get("no_info") or not infer.get("meaning", "").strip():
             db.conn.execute(
                 "UPDATE jargons SET last_inference_count=? WHERE id=?",
                 (jargon["count"], jargon["id"]),
             )
             db.conn.commit()
             return
-        prompt2 = f'请推断词条 \'{content}\' 的含义（仅基于词条本身，无上下文）\n以JSON输出: {{"meaning": "含义"}}'
-        try:
-            resp2 = await self._llm_caller(prompt2)
-        except Exception as e:
-            logger.error(f"Jargon inference2 failed: {e}")
-            return
-        infer2 = self._parse_json(resp2)
-        if not infer2:
-            return
-        compare_prompt = get_prompt("compare").format(
-            inference1=json.dumps(infer1, ensure_ascii=False),
-            inference2=json.dumps(infer2, ensure_ascii=False),
-        )
-        try:
-            resp3 = await self._llm_caller(compare_prompt)
-        except Exception as e:
-            logger.error(f"Jargon comparison failed: {e}")
-            db.update_jargon_meaning(
-                jargon["id"], infer1.get("meaning", ""), is_jargon=True
-            )
-            return
-        comp = self._parse_json(resp3)
-        is_jargon = True
-        if comp and comp.get("is_similar"):
-            is_jargon = False
-        if is_jargon:
-            db.update_jargon_meaning(
-                jargon["id"], infer1.get("meaning", ""), is_jargon=True
-            )
-        else:
-            db.update_jargon_meaning(jargon["id"], "", is_jargon=False)
+        has_meaning = True
+        db.update_jargon_meaning(jargon["id"], infer.get("meaning", ""), is_jargon=True)
         db.conn.execute(
             "UPDATE jargons SET last_inference_count=?, is_complete=? WHERE id=?",
             (
                 jargon["count"],
-                1 if (jargon.get("count", 0) or 0) >= 100 else 0,
+                1 if (jargon.get("count", 0) or 0) >= 20 else 0,
                 jargon["id"],
             ),
         )
         db.conn.commit()
-        status = "黑话" if is_jargon else "非黑话"
-        logger.info(f"Jargon [{status}] {content}: {infer1.get('meaning', '')}")
+        logger.info(f"Jargon [{content}]: {infer.get('meaning', '')}")
 
     def _parse_json(self, text: str) -> dict | None:
         text = text.strip()
