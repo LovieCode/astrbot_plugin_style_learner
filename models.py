@@ -444,7 +444,7 @@ class Database:
         if not text:
             return []
         rows = self.conn.execute(
-            "SELECT * FROM jargons WHERE meaning != '' AND meaning IS NOT NULL ORDER BY count DESC",
+            "SELECT * FROM jargons WHERE meaning != '' AND meaning IS NOT NULL AND (rejected IS NULL OR rejected=0) ORDER BY count DESC",
         ).fetchall()
         matched = {}
         for r in rows:
