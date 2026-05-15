@@ -146,7 +146,7 @@ class ApiRouter:
         name_map = db.get_chat_name_map(chat_ids)
         for e in exprs:
             e["_chat_name"] = name_map.get(e.get("chat_id", ""), "")
-        return {"success": True, "data": exprs, "total": total}
+        return {"success": True, "data": {"items": exprs, "total": total}}
 
     async def _api_get_expression(self, expr_id: int, *args, **kwargs):
         db = get_db()
@@ -199,7 +199,7 @@ class ApiRouter:
         name_map = db.get_chat_name_map(chat_ids)
         for j in jargons:
             j["_chat_name"] = name_map.get(j.get("chat_id", ""), "")
-        return {"success": True, "data": jargons, "total": total}
+        return {"success": True, "data": {"items": jargons, "total": total}}
 
     async def _api_update_jargon_meaning(self, jargon_id: int, *args, **kwargs):
         from quart import request as quart_request

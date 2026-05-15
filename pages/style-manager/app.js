@@ -210,16 +210,16 @@ async function loadExpressions() {
   var pageSize = parseInt(document.getElementById('expr-page-size').value) || 20;
   state.exprPageSize = pageSize;
   var res = await api('GET', '/expressions', { emotion: emotion, status: status, chat_id: chatId, search: search, page: state.exprPage, page_size: pageSize });
-  var success = res.success, data = res.data, total = res.total;
-  if (!success || !data) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
-  state.exprTotal = total || 0;
+  var success = res.success, data = (res.data || {}), total = data.total || 0, items = data.items || [];
+  if (!success) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
+  state.exprTotal = total;
   infoEl.textContent = total ? '共 ' + total + ' 条' : '';
-  if (data.length === 0) {
+  if (items.length === 0) {
     var filterHint = search ? '未找到匹配表达方式' : (emotion !== 'all' ? '当前情绪筛选下暂无数据' : '');
     el.innerHTML = renderEmpty('search', filterHint || '暂无表达数据', filterHint ? '尝试修改筛选条件' : '群聊消息积累后将自动学习表达方式');
     return;
   }
-  el.innerHTML = data.map(function (e) {
+  el.innerHTML = items.map(function (e) {
     var emotionName = e.emotion || 'neutral';
     var cssClass = lookupEmotionCss(emotionName);
     var emoIcon = EMOTION_LUCIDE[emotionName] || 'minus';
@@ -364,16 +364,16 @@ async function loadJargons() {
   var pageSize = parseInt(document.getElementById('jargon-page-size').value) || 20;
   state.jargonPageSize = pageSize;
   var res = await api('GET', '/jargons', { search: q, page: state.jargonPage, page_size: pageSize });
-  var success = res.success, data = res.data, total = res.total;
+  var success = res.success, data = (res.data || {}), total = data.total || 0, items = data.items || [];
   if (!success) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
-  state.jargonTotal = total || 0;
+  state.jargonTotal = total;
   infoEl.textContent = total ? '共 ' + total + ' 条' : '';
-  if (!data || data.length === 0) {
+  if (!items || items.length === 0) {
     var hint = q ? '未找到匹配黑话' : '暂无黑话数据';
     el.innerHTML = renderEmpty('search', hint, q ? '尝试修改搜索关键词' : '群聊消息积累后将自动挖掘黑话');
     return;
   }
-  el.innerHTML = data.map(function (j) {
+  el.innerHTML = items.map(function (j) {
     var hasMeaning = j.meaning && j.meaning !== '待推断';
     var rejected = j.rejected;
     return '<div class="item-card' + (rejected ? ' item-card--rejected' : '') + '" data-id="' + j.id + '" role="listitem">' +
