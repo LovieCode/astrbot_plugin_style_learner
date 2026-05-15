@@ -210,7 +210,7 @@ async function loadExpressions() {
   var pageSize = parseInt(document.getElementById('expr-page-size').value) || 20;
   state.exprPageSize = pageSize;
   var res = await api('GET', '/expressions', { emotion: emotion, status: status, chat_id: chatId, search: search, page: state.exprPage, page_size: pageSize });
-  console.log('[StyleLearner] expressions response:', JSON.stringify(res).slice(0, 300));
+  console.log('[SL] res.total=' + res.total + ' data.len=' + (Array.isArray(res.data)?res.data.length:typeof res.data) + ' pageSize=' + pageSize);
   var success = res.success;
   var items = Array.isArray(res.data) ? res.data : (res.data && res.data.items) || [];
   var total = typeof res.total === 'number' ? res.total : (res.data && res.data.total) || items.length;
@@ -367,7 +367,7 @@ async function loadJargons() {
   var pageSize = parseInt(document.getElementById('jargon-page-size').value) || 20;
   state.jargonPageSize = pageSize;
   var res = await api('GET', '/jargons', { search: q, page: state.jargonPage, page_size: pageSize });
-  console.log('[StyleLearner] jargons response:', JSON.stringify(res).slice(0, 300));
+  console.log('[SL] jargons total=' + res.total + ' data.len=' + (Array.isArray(res.data)?res.data.length:typeof res.data) + ' pageSize=' + pageSize);
   var success = res.success;
   var items = Array.isArray(res.data) ? res.data : (res.data && res.data.items) || [];
   var total = typeof res.total === 'number' ? res.total : (res.data && res.data.total) || items.length;
