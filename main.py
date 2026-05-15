@@ -189,8 +189,8 @@ class StyleLearnerPlugin(Star):
             "context_recent_messages_count": 0,
             "context_include_images": True,
             "guard_enabled": True,
-            "debounce_seconds": 0.5,
-            "smooth_seconds": 0,
+            "debounce_seconds": 1,
+            "smooth_seconds": 2,
             "bot_name": "",
         }
         if isinstance(self.config, dict) and self.config:
@@ -652,11 +652,15 @@ class StyleLearnerPlugin(Star):
                     f"StyleLearner: injected {len(recent)} recent msgs as context for {chat_id}"
                 )
 
-        # 工具指令必须放在最最最尾部，LLM 对尾部指令遵循更好
+        # 工具指令双端注入：系统提示 + 用户消息尾部
+        _tool_hint = (
+            "- 你只能用 send_message_to_user 工具向用户发送消息。"
+            "如果无需回复，不要使用工具也不要输出任何文本。"
+        )
+        if _tool_hint not in req.system_prompt:
+            req.system_prompt = req.system_prompt.rstrip() + "\n\n" + _tool_hint
         req.extra_user_content_parts.append(
-            TextPart(
-                text="- 使用 send_message_to_user 工具来发送消息。如果无需回复，不要使用工具也不要输出任何文本"
-            ).mark_as_temp()
+            TextPart(text=_tool_hint).mark_as_temp()
         )
 
     @filter.on_llm_response()
@@ -665,31 +669,30 @@ class StyleLearnerPlugin(Star):
         if not self.recorder:
             return
         text = ""
-        if hasattr(response, "completion_text"):
-            text = response.completion_text or ""
-        elif isinstance(response, str):
-            text = response
-        if text.strip():
-            self.recorder.record(
-                umo, "assistant", text.strip(), sender_name=self._bot_name
-            )
-            if umo not in self._recent_messages:
-                self._recent_messages[umo] = deque(maxlen=200)
-            self._recent_messages[umo].append({
-                "role": "assistant", "sender": f"{self._bot_name}（你）", "text": text.strip(),
-                "images": [],
-            })
-
         # Guard：标记 LLM 是否通过 send_message_to_user 工具发送了消息
-        if hasattr(response, "tools_call_name") and "send_message_to_user" in (
+        tool_sent = hasattr(response, "tools_call_name") and "send_message_to_user" in (
             response.tools_call_name or []
-        ):
+        )
+        if tool_sent:
             event.set_extra("_tool_sent_message", True)
 
         # Guard：标记 LLM 直接输出了文本而非通过工具发送 → 视为心里话
         ct = (response.completion_text or "").strip()
-        if ct and not event.get_extra("_tool_sent_message"):
+        if ct and not tool_sent:
             event.set_extra("_llm_heart_words", True)
+
+        # 记录到对话历史。关掉 guard 时直接文本也记录，否则只记工具发送的消息
+        guard_on = self.config.get("guard_enabled", True) if isinstance(self.config, dict) else True
+        if ct and (tool_sent or not guard_on):
+            self.recorder.record(
+                umo, "assistant", ct, sender_name=self._bot_name
+            )
+            if umo not in self._recent_messages:
+                self._recent_messages[umo] = deque(maxlen=200)
+            self._recent_messages[umo].append({
+                "role": "assistant", "sender": f"{self._bot_name}（你）", "text": ct,
+                "images": [],
+            })
 
     @filter.on_decorating_result(priority=9999)
     async def on_guard_result(self, event: AstrMessageEvent):
