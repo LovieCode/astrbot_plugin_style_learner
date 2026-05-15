@@ -190,6 +190,7 @@ class StyleLearnerPlugin(Star):
             "context_include_images": True,
             "guard_enabled": True,
             "debounce_seconds": 0.5,
+            "smooth_seconds": 0,
             "bot_name": "",
         }
         if isinstance(self.config, dict) and self.config:
@@ -536,6 +537,20 @@ class StyleLearnerPlugin(Star):
                 await asyncio.sleep(debounce - age)
                 if self._last_message_ts.get(chat_id, 0.0) > arrival_ts:
                     logger.debug(f"StyleLearner: debounce skip (post-sleep) for {chat_id}")
+                    event.clear_result()
+                    return
+
+        # 平滑：连续两次 LLM 调用之间至少间隔 smooth_seconds
+        smooth = cfg.get("smooth_seconds", 0)
+        if smooth > 0:
+            last_llm = self._last_llm_time.get(chat_id, 0.0)
+            if last_llm > 0:
+                elapsed = time.time() - last_llm
+                if elapsed < smooth:
+                    logger.debug(
+                        f"StyleLearner: smooth skip for {chat_id} "
+                        f"({elapsed:.1f}s < {smooth}s)"
+                    )
                     event.clear_result()
                     return
         self._last_llm_time[chat_id] = time.time()
