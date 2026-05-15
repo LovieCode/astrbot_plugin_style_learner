@@ -210,7 +210,7 @@ async function loadExpressions() {
   var pageSize = parseInt(document.getElementById('expr-page-size').value) || 20;
   state.exprPageSize = pageSize;
   var res = await api('GET', '/expressions', { emotion: emotion, status: status, chat_id: chatId, search: search, page: state.exprPage, page_size: pageSize });
-  var success = res.success, data = (res.data || {}), total = data.total || 0, items = data.items || [];
+  var success = res.success, items = res.data || [], total = res.total || 0;
   if (!success) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
   state.exprTotal = total;
   infoEl.textContent = total ? '共 ' + total + ' 条' : '';
@@ -364,7 +364,7 @@ async function loadJargons() {
   var pageSize = parseInt(document.getElementById('jargon-page-size').value) || 20;
   state.jargonPageSize = pageSize;
   var res = await api('GET', '/jargons', { search: q, page: state.jargonPage, page_size: pageSize });
-  var success = res.success, data = (res.data || {}), total = data.total || 0, items = data.items || [];
+  var success = res.success, items = res.data || [], total = res.total || 0;
   if (!success) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
   state.jargonTotal = total;
   infoEl.textContent = total ? '共 ' + total + ' 条' : '';
