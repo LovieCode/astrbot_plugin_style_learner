@@ -304,6 +304,17 @@ main {
   min-width: 180px;
 }
 
+.page-size-select {
+  min-width: 100px;
+}
+
+.list-info {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-3);
+  text-align: right;
+}
+
 .btn-primary,
 .btn-secondary,
 .btn-danger,

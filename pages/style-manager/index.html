@@ -36,6 +36,7 @@
     <main>
       <section id="tab-expressions" class="tab-pane active" role="tabpanel" aria-label="表达列表">
         <div class="toolbar">
+          <input type="text" id="expr-search" placeholder="搜索表达方式..." aria-label="搜索表达方式">
           <select id="emotion-filter" aria-label="按情绪筛选">
             <option value="all">🎭 全部情绪</option>
             <option value="开心">😊 开心</option>
@@ -65,8 +66,15 @@
           <select id="chat-filter" aria-label="按群聊筛选">
             <option value="">💬 全部群</option>
           </select>
+          <select id="expr-page-size" class="page-size-select" aria-label="每页条数">
+            <option value="10">10条/页</option>
+            <option value="20" selected>20条/页</option>
+            <option value="50">50条/页</option>
+            <option value="100">100条/页</option>
+          </select>
           <button id="refresh-expr-btn" class="btn-ghost" aria-label="刷新表达列表"><i data-lucide="refresh-cw"></i> 刷新</button>
         </div>
+        <div class="list-info" id="expr-list-info"></div>
         <div id="expr-list" class="item-list" role="list"></div>
         <div id="expr-pagination" class="pagination" role="navigation" aria-label="分页"></div>
       </section>
@@ -74,8 +82,15 @@
       <section id="tab-jargons" class="tab-pane" role="tabpanel" aria-label="黑话管理">
         <div class="toolbar">
           <input type="text" id="jargon-search" placeholder="搜索黑话词条..." aria-label="搜索黑话">
+          <select id="jargon-page-size" class="page-size-select" aria-label="每页条数">
+            <option value="10">10条/页</option>
+            <option value="20" selected>20条/页</option>
+            <option value="50">50条/页</option>
+            <option value="100">100条/页</option>
+          </select>
           <button id="refresh-jargon-btn" class="btn-ghost" aria-label="刷新黑话列表"><i data-lucide="refresh-cw"></i> 刷新</button>
         </div>
+        <div class="list-info" id="jargon-list-info"></div>
         <div id="jargon-list" class="item-list" role="list"></div>
         <div id="jargon-pagination" class="pagination" role="navigation" aria-label="分页"></div>
       </section>

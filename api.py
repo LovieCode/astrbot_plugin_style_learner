@@ -130,6 +130,7 @@ class ApiRouter:
         chat_id = quart_request.args.get("chat_id", "")
         emotion = quart_request.args.get("emotion", "")
         status = quart_request.args.get("status", "")
+        search = quart_request.args.get("search", "")
         page = int(quart_request.args.get("page", 1))
         page_size = int(quart_request.args.get("page_size", 20))
         db = get_db()
@@ -137,6 +138,7 @@ class ApiRouter:
             chat_id=chat_id if chat_id else None,
             emotion=emotion if emotion and emotion != "all" else None,
             status=status,
+            search=search,
             page=page,
             page_size=page_size,
         )
@@ -183,11 +185,13 @@ class ApiRouter:
         from quart import request as quart_request
 
         chat_id = quart_request.args.get("chat_id", "")
+        search = quart_request.args.get("search", "")
         page = int(quart_request.args.get("page", 1))
         page_size = int(quart_request.args.get("page_size", 20))
         db = get_db()
         jargons, total = db.get_jargons(
             chat_id=chat_id if chat_id else None,
+            search=search,
             page=page,
             page_size=page_size,
         )

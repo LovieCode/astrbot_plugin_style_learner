@@ -82,10 +82,11 @@ function PLUGIN() {
 }
 
 var state = {
-  exprPage: 1, exprTotal: 0,
-  jargonPage: 1, jargonTotal: 0,
+  exprPage: 1, exprTotal: 0, exprPageSize: 20,
+  jargonPage: 1, jargonTotal: 0, jargonPageSize: 20,
   chatGroups: [],
 };
+var _exprSearchTimer = null;
 
 /** 通用 API 调用 */
 async function api(method, path, paramsOrBody) {
@@ -200,17 +201,22 @@ document.querySelectorAll('.tab-btn').forEach(function (btn) {
 /** 加载表达列表 */
 async function loadExpressions() {
   var el = document.getElementById('expr-list');
+  var infoEl = document.getElementById('expr-list-info');
   el.innerHTML = renderSkeleton(5);
   var emotion = document.getElementById('emotion-filter').value;
   var status = document.getElementById('status-filter').value;
   var chatId = document.getElementById('chat-filter').value;
-  var res = await api('GET', '/expressions', { emotion: emotion, status: status, chat_id: chatId, page: state.exprPage, page_size: 20 });
+  var search = document.getElementById('expr-search').value.trim();
+  var pageSize = parseInt(document.getElementById('expr-page-size').value) || 20;
+  state.exprPageSize = pageSize;
+  var res = await api('GET', '/expressions', { emotion: emotion, status: status, chat_id: chatId, search: search, page: state.exprPage, page_size: pageSize });
   var success = res.success, data = res.data, total = res.total;
   if (!success || !data) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
   state.exprTotal = total || 0;
+  infoEl.textContent = total ? '共 ' + total + ' 条' : '';
   if (data.length === 0) {
-    var filterHint = emotion !== 'all' ? '当前情绪筛选下暂无数据' : '';
-    el.innerHTML = renderEmpty('clipboard', '暂无表达数据', filterHint || '群聊消息积累后将自动学习表达方式');
+    var filterHint = search ? '未找到匹配表达方式' : (emotion !== 'all' ? '当前情绪筛选下暂无数据' : '');
+    el.innerHTML = renderEmpty('search', filterHint || '暂无表达数据', filterHint ? '尝试修改筛选条件' : '群聊消息积累后将自动学习表达方式');
     return;
   }
   el.innerHTML = data.map(function (e) {
@@ -245,7 +251,8 @@ async function loadExpressions() {
       '<button class="btn-ghost btn-sm" onclick="deleteExpr(' + e.id + ')" title="删除">' + _i('trash') + '</button>' +
       '</div></div>';
   }).join('');
-  renderPagination('expr-pagination', state.exprPage, Math.ceil(state.exprTotal / 20), function (p) { state.exprPage = p; loadExpressions(); });
+  var totalPages = Math.ceil(state.exprTotal / pageSize);
+  renderPagination('expr-pagination', state.exprPage, totalPages, function (p) { state.exprPage = p; loadExpressions(); });
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -351,17 +358,22 @@ async function saveEdit() {
 /** 加载黑话列表 */
 async function loadJargons() {
   var el = document.getElementById('jargon-list');
+  var infoEl = document.getElementById('jargon-list-info');
   el.innerHTML = renderSkeleton(5);
-  var q = document.getElementById('jargon-search').value;
-  var res = await api('GET', '/jargons', { page: state.jargonPage, page_size: 20 });
+  var q = document.getElementById('jargon-search').value.trim();
+  var pageSize = parseInt(document.getElementById('jargon-page-size').value) || 20;
+  state.jargonPageSize = pageSize;
+  var res = await api('GET', '/jargons', { search: q, page: state.jargonPage, page_size: pageSize });
   var success = res.success, data = res.data, total = res.total;
   if (!success) { el.innerHTML = renderEmpty('alert-triangle', '加载失败', '请检查网络连接后重试'); return; }
   state.jargonTotal = total || 0;
-  if (!data || data.length === 0) { el.innerHTML = renderEmpty('book-open', '暂无黑话数据', '群聊消息积累后将自动挖掘黑话'); return; }
-  var filtered = data;
-  if (q) filtered = data.filter(function (j) { return j.content.includes(q); });
-  if (filtered.length === 0) { el.innerHTML = renderEmpty('search', '未找到匹配黑话', '尝试修改搜索关键词'); return; }
-  el.innerHTML = filtered.map(function (j) {
+  infoEl.textContent = total ? '共 ' + total + ' 条' : '';
+  if (!data || data.length === 0) {
+    var hint = q ? '未找到匹配黑话' : '暂无黑话数据';
+    el.innerHTML = renderEmpty('search', hint, q ? '尝试修改搜索关键词' : '群聊消息积累后将自动挖掘黑话');
+    return;
+  }
+  el.innerHTML = data.map(function (j) {
     var hasMeaning = j.meaning && j.meaning !== '待推断';
     var rejected = j.rejected;
     return '<div class="item-card' + (rejected ? ' item-card--rejected' : '') + '" data-id="' + j.id + '" role="listitem">' +
@@ -380,7 +392,8 @@ async function loadJargons() {
       '<button class="btn-ghost btn-sm" onclick="deleteJargon(' + j.id + ')" title="删除">' + _i('trash') + '</button>' +
       '</div></div>';
   }).join('');
-  renderPagination('jargon-pagination', state.jargonPage, Math.ceil(state.jargonTotal / 20), function (p) { state.jargonPage = p; loadJargons(); });
+  var totalPages = Math.ceil(state.jargonTotal / pageSize);
+  renderPagination('jargon-pagination', state.jargonPage, totalPages, function (p) { state.jargonPage = p; loadJargons(); });
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -1031,7 +1044,13 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('status-filter').addEventListener('change', function () { state.exprPage = 1; loadExpressions(); });
   document.getElementById('chat-filter').addEventListener('change', function () { state.exprPage = 1; loadExpressions(); });
   document.getElementById('refresh-expr-btn').addEventListener('click', function () { loadExpressions(); });
-  document.getElementById('jargon-search').addEventListener('input', function () { loadJargons(); });
+  document.getElementById('expr-search').addEventListener('input', function () {
+    clearTimeout(_exprSearchTimer);
+    _exprSearchTimer = setTimeout(function () { state.exprPage = 1; loadExpressions(); }, 300);
+  });
+  document.getElementById('expr-page-size').addEventListener('change', function () { state.exprPage = 1; loadExpressions(); });
+  document.getElementById('jargon-search').addEventListener('input', function () { state.jargonPage = 1; loadJargons(); });
+  document.getElementById('jargon-page-size').addEventListener('change', function () { state.jargonPage = 1; loadJargons(); });
   document.getElementById('refresh-jargon-btn').addEventListener('click', function () { loadJargons(); });
   document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
   if (typeof lucide !== 'undefined') lucide.createIcons();

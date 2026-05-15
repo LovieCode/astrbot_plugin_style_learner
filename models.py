@@ -233,6 +233,7 @@ class Database:
         checked_only: bool = False,
         exclude_rejected: bool = False,
         status: str = "",
+        search: str = "",
     ) -> tuple[list[dict], int]:
         conditions = []
         params = []
@@ -252,6 +253,9 @@ class Database:
             conditions.append("checked=1 AND rejected=0")
         elif exclude_rejected:
             conditions.append("rejected=0")
+        if search:
+            conditions.append("(situation LIKE ? OR style LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%"])
         where = " AND ".join(conditions) if conditions else "1"
         total = self.conn.execute(
             f"SELECT COUNT(*) FROM expressions WHERE {where}", params
@@ -363,9 +367,12 @@ class Database:
         self.conn.commit()
 
     def get_jargons(
-        self, chat_id: str | None = None, page: int = 1, page_size: int = 20
+        self, chat_id: str | None = None, page: int = 1, page_size: int = 20, search: str = ""
     ) -> tuple[list[dict], int]:
-        total = 0
+        def _match_search(d: dict) -> bool:
+            if not search:
+                return True
+            return search in d.get("content", "") or search in d.get("meaning", "")
         if chat_id:
             rows = self.conn.execute(
                 "SELECT * FROM jargons ORDER BY count DESC", ()
@@ -375,16 +382,25 @@ class Database:
                 d = dict(r)
                 cl = json.loads(d["chat_id"] or "[]")
                 if any(isinstance(i, list) and i[0] == chat_id for i in cl):
-                    filtered.append(d)
+                    if _match_search(d):
+                        filtered.append(d)
             total = len(filtered)
             offset = (page - 1) * page_size
             return filtered[offset : offset + page_size], total
         else:
-            total = self.conn.execute("SELECT COUNT(*) FROM jargons").fetchone()[0]
+            conditions = []
+            params = []
+            if search:
+                conditions.append("(content LIKE ? OR meaning LIKE ?)")
+                params.extend([f"%{search}%", f"%{search}%"])
+            where = " AND ".join(conditions) if conditions else "1"
+            total = self.conn.execute(
+                f"SELECT COUNT(*) FROM jargons WHERE {where}", params
+            ).fetchone()[0]
             offset = (page - 1) * page_size
             rows = self.conn.execute(
-                "SELECT * FROM jargons ORDER BY count DESC LIMIT ? OFFSET ?",
-                (page_size, offset),
+                f"SELECT * FROM jargons WHERE {where} ORDER BY count DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset],
             ).fetchall()
             return [dict(r) for r in rows], total
 
