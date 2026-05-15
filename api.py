@@ -50,6 +50,12 @@ class ApiRouter:
             "获取黑话列表",
         )
         p.context.register_web_api(
+            "/astrbot_plugin_style_learner/jargon/<int:jargon_id>",
+            self._api_get_jargon,
+            ["GET"],
+            "获取单个黑话",
+        )
+        p.context.register_web_api(
             "/astrbot_plugin_style_learner/jargon/<int:jargon_id>/meaning",
             self._api_update_jargon_meaning,
             ["POST"],
@@ -200,6 +206,13 @@ class ApiRouter:
         for j in jargons:
             j["_chat_name"] = name_map.get(j.get("chat_id", ""), "")
         return {"success": True, "data": {"items": jargons, "total": total}}
+
+    async def _api_get_jargon(self, jargon_id: int, *args, **kwargs):
+        db = get_db()
+        j = db.get_jargon_by_id(jargon_id)
+        if j is None:
+            return {"success": False, "message": "黑话不存在"}
+        return {"success": True, "data": j}
 
     async def _api_update_jargon_meaning(self, jargon_id: int, *args, **kwargs):
         from quart import request as quart_request

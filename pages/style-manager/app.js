@@ -406,10 +406,10 @@ async function loadJargons() {
 var _jargonId = null;
 
 /** 编辑黑话含义 */
-function editJargon(id) {
+async function editJargon(id) {
   _jargonId = id;
   var html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()">' +
-    '<div class="modal"><h3>' + _i('edit') + ' 编辑黑话含义</h3>' +
+    '<div class="modal"><h3>' + _i('book-open') + ' 编辑黑话含义</h3>' +
     '<label for="edit-meaning">含义解释</label>' +
     '<textarea id="edit-meaning" rows="4" placeholder="输入该黑话的含义解释..."></textarea>' +
     '<div class="modal-actions">' +
@@ -417,6 +417,14 @@ function editJargon(id) {
     '<button class="btn-primary" onclick="saveJargon()">' + _i('save') + ' 保存</button>' +
     '</div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
+  try {
+    var res = await api('GET', '/jargon/' + id);
+    if (res.success && res.data) {
+      document.getElementById('edit-meaning').value = res.data.meaning || '';
+    }
+  } catch (e) {
+    showToast('无法加载黑话数据', 'error');
+  }
   document.getElementById('edit-meaning').focus();
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }

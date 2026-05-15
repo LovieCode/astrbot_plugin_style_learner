@@ -472,6 +472,12 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_jargon_by_id(self, jargon_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM jargons WHERE id=?", (jargon_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def delete_jargon(self, jargon_id: int):
         self.conn.execute("DELETE FROM jargons WHERE id=?", (jargon_id,))
         self.conn.commit()
