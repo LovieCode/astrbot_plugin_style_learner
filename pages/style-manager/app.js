@@ -1019,14 +1019,20 @@ async function loadChatGroups() {
 function renderPagination(elId, current, total, onPage) {
   var el = document.getElementById(elId);
   if (total <= 1) { el.innerHTML = ''; return; }
-  var html = '';
+  var isExpr = elId === 'expr-pagination';
+  var prev = function (p) { setPage(p, isExpr); };
+  var html = '<span class="page-info">' + current + '/' + total + '</span>';
+  html += '<button class="page-btn" onclick="setPage(1,' + isExpr + ')"' + (current === 1 ? ' style="opacity:0.4;pointer-events:none"' : '') + '>‹‹</button>';
+  html += '<button class="page-btn" onclick="setPage(' + (current - 1) + ',' + isExpr + ')"' + (current === 1 ? ' style="opacity:0.4;pointer-events:none"' : '') + '>‹</button>';
   var start = Math.max(1, current - 2);
   var end = Math.min(total, current + 2);
-  if (start > 1) html += '<button class="page-btn" onclick="setPage(1,' + (elId === 'expr-pagination') + ')">1</button><span class="page-btn" style="border:none;cursor:default">...</span>';
+  if (start > 1) html += '<button class="page-btn" onclick="setPage(1,' + isExpr + ')">1</button><span class="page-ellipsis">…</span>';
   for (var i = start; i <= end; i++) {
-    html += '<button class="page-btn ' + (i === current ? 'active' : '') + '" onclick="setPage(' + i + ',' + (elId === 'expr-pagination') + ')">' + i + '</button>';
+    html += '<button class="page-btn ' + (i === current ? 'active' : '') + '" onclick="setPage(' + i + ',' + isExpr + ')">' + i + '</button>';
   }
-  if (end < total) html += '<span class="page-btn" style="border:none;cursor:default">...</span><button class="page-btn" onclick="setPage(' + total + ',' + (elId === 'expr-pagination') + ')">' + total + '</button>';
+  if (end < total) html += '<span class="page-ellipsis">…</span><button class="page-btn" onclick="setPage(' + total + ',' + isExpr + ')">' + total + '</button>';
+  html += '<button class="page-btn" onclick="setPage(' + (current + 1) + ',' + isExpr + ')"' + (current === total ? ' style="opacity:0.4;pointer-events:none"' : '') + '>›</button>';
+  html += '<button class="page-btn" onclick="setPage(' + total + ',' + isExpr + ')"' + (current === total ? ' style="opacity:0.4;pointer-events:none"' : '') + '>››</button>';
   el.innerHTML = html;
 }
 

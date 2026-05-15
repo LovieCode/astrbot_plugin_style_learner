@@ -264,20 +264,21 @@ main {
 
 .toolbar {
   display: flex;
-  gap: var(--space-3);
-  margin-bottom: var(--space-5);
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
   align-items: center;
   flex-wrap: wrap;
   background: var(--color-surface);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--color-border);
+  min-height: 44px;
 }
 
 .toolbar select,
 .toolbar input {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
@@ -285,7 +286,8 @@ main {
   background: var(--color-bg);
   color: var(--color-text);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-  min-height: 36px;
+  height: 32px;
+  flex-shrink: 0;
 }
 
 .toolbar select:hover,
@@ -301,11 +303,18 @@ main {
 }
 
 .toolbar input {
-  min-width: 180px;
+  min-width: 120px;
+  flex-shrink: 1;
+}
+
+.toolbar > .btn-ghost {
+  height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
 }
 
 .page-size-select {
-  min-width: 100px;
+  min-width: 80px;
 }
 
 .list-info {
@@ -596,6 +605,22 @@ main {
 .status-badge.rejected {
   background: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+.page-info {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-right: var(--space-2);
+  white-space: nowrap;
+}
+
+.page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: default;
 }
 
 .pagination {
