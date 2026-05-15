@@ -640,7 +640,7 @@ class StyleLearnerPlugin(Star):
         # 工具指令必须放在最最最尾部，LLM 对尾部指令遵循更好
         req.extra_user_content_parts.append(
             TextPart(
-                text="- 你必须使用 send_message_to_user 工具来发送消息给用户，不要直接输出文本。直接输出的文本会被系统拦截不会发送给用户"
+                text="- 使用 send_message_to_user 工具来发送消息。如果无需回复，不要使用工具也不要输出任何文本"
             ).mark_as_temp()
         )
 
