@@ -313,6 +313,16 @@ main {
   font-size: var(--text-sm);
 }
 
+.toolbar > .btn-ghost svg {
+  width: 16px;
+  height: 16px;
+}
+
+.toolbar > .btn-ghost i[data-lucide] {
+  width: 16px;
+  height: 16px;
+}
+
 .page-size-select {
   min-width: 80px;
 }
@@ -343,6 +353,20 @@ main {
   transition: all var(--transition-fast);
   min-height: 36px;
   line-height: 1;
+}
+
+.btn-primary svg,
+.btn-secondary svg,
+.btn-danger svg,
+.btn-success svg,
+.btn-ghost svg,
+.btn-primary i[data-lucide],
+.btn-secondary i[data-lucide],
+.btn-danger i[data-lucide],
+.btn-success i[data-lucide],
+.btn-ghost i[data-lucide] {
+  width: 16px;
+  height: 16px;
 }
 
 .btn-primary {
