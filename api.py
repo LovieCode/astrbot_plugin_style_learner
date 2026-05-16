@@ -1,8 +1,35 @@
+import asyncio
+import contextvars
 import json
 
 from astrbot.api import logger
 
 from .models import get_db
+
+_request_ctx = contextvars.ContextVar("request")
+
+
+class _AiohttpRequestAdapter:
+    def __init__(self, request):
+        self._req = request
+        self.args = request.query
+
+    async def get_json(self, silent=True):
+        try:
+            return await self._req.json()
+        except Exception:
+            if silent:
+                return None
+            raise
+
+
+def _get_request():
+    req = _request_ctx.get(None)
+    if req is not None:
+        return req
+    from quart import request as quart_request
+
+    return quart_request
 
 
 class ApiRouter:
@@ -131,14 +158,13 @@ class ApiRouter:
     # ── handlers ──
 
     async def _api_get_expressions(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
-        emotion = quart_request.args.get("emotion", "")
-        status = quart_request.args.get("status", "")
-        search = quart_request.args.get("search", "")
-        page = int(quart_request.args.get("page", 1))
-        page_size = int(quart_request.args.get("page_size", 20))
+        req = _get_request()
+        chat_id = req.args.get("chat_id", "")
+        emotion = req.args.get("emotion", "")
+        status = req.args.get("status", "")
+        search = req.args.get("search", "")
+        page = int(req.args.get("page", 1))
+        page_size = int(req.args.get("page_size", 20))
         db = get_db()
         exprs, total = db.get_expressions(
             chat_id=chat_id if chat_id else None,
@@ -162,9 +188,8 @@ class ApiRouter:
         return {"success": True, "data": expr}
 
     async def _api_check_expression(self, expr_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         checked = body.get("checked", True)
         rejected = body.get("rejected", False)
         db = get_db()
@@ -177,9 +202,8 @@ class ApiRouter:
         return {"success": True}
 
     async def _api_edit_expression(self, expr_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         db = get_db()
         db.update_expression(
             expr_id,
@@ -188,12 +212,11 @@ class ApiRouter:
         return {"success": True}
 
     async def _api_get_jargons(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
-        search = quart_request.args.get("search", "")
-        page = int(quart_request.args.get("page", 1))
-        page_size = int(quart_request.args.get("page_size", 20))
+        req = _get_request()
+        chat_id = req.args.get("chat_id", "")
+        search = req.args.get("search", "")
+        page = int(req.args.get("page", 1))
+        page_size = int(req.args.get("page_size", 20))
         db = get_db()
         jargons, total = db.get_jargons(
             chat_id=chat_id if chat_id else None,
@@ -215,18 +238,16 @@ class ApiRouter:
         return {"success": True, "data": j}
 
     async def _api_update_jargon_meaning(self, jargon_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         meaning = body.get("meaning", "")
         db = get_db()
         db.update_jargon_meaning(jargon_id, meaning, is_jargon=True)
         return {"success": True}
 
     async def _api_check_jargon(self, jargon_id: int, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         rejected = body.get("rejected", False)
         db = get_db()
         db.conn.execute(
@@ -289,9 +310,8 @@ class ApiRouter:
         }
 
     async def _api_pending_messages(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        chat_id = quart_request.args.get("chat_id", "")
+        req = _get_request()
+        chat_id = req.args.get("chat_id", "")
         plugin = self.plugin
         if not plugin.recorder:
             return {"success": True, "data": []}
@@ -321,9 +341,8 @@ class ApiRouter:
         return {"success": True, "data": cfg}
 
     async def _api_update_settings(self, *args, **kwargs):
-        from quart import request as quart_request
-
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         if "expression_groups" in body:
             val = body["expression_groups"]
             if isinstance(val, str):
@@ -349,10 +368,10 @@ class ApiRouter:
         return {"success": True, "data": get_all_prompts()}
 
     async def _api_save_prompts(self, *args, **kwargs):
-        from quart import request as quart_request
-        from .prompt_manager import set_prompt, reset_prompt
+        from .prompt_manager import reset_prompt, set_prompt
 
-        body = await quart_request.get_json(silent=True) or {}
+        req = _get_request()
+        body = await req.get_json(silent=True) or {}
         key = body.get("key", "")
         value = body.get("value")
         if not key:
@@ -362,3 +381,73 @@ class ApiRouter:
             return {"success": True, "message": f"Prompt '{key}' 已重置为默认值"}
         set_prompt(key, value)
         return {"success": True, "message": f"Prompt '{key}' 已保存"}
+
+    # ── self-hosted server (旧版 AstrBot 兼容) ──
+
+    def start_self_hosted(self, host="0.0.0.0", port=6187):
+        from aiohttp import web
+
+        def _aiohttp_route(handler):
+            async def wrapper(request):
+                token = _request_ctx.set(_AiohttpRequestAdapter(request))
+                try:
+                    kwargs = {}
+                    for k, v in request.match_info.items():
+                        kwargs[k] = int(v) if v.isdigit() else v
+                    result = await handler(**kwargs)
+                    return web.json_response(result)
+                finally:
+                    _request_ctx.reset(token)
+            return wrapper
+
+        app = web.Application()
+
+        @web.middleware
+        async def cors_middleware(request, handler):
+            if request.method == "OPTIONS":
+                return web.Response(
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    }
+                )
+            resp = await handler(request)
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            return resp
+
+        app.middlewares.append(cors_middleware)
+
+        P = "/astrbot_plugin_style_learner"
+
+        # GET
+        app.router.add_get(f"{P}/expressions", _aiohttp_route(self._api_get_expressions))
+        app.router.add_get(f"{P}/expression/{{expr_id}}", _aiohttp_route(self._api_get_expression))
+        app.router.add_get(f"{P}/jargons", _aiohttp_route(self._api_get_jargons))
+        app.router.add_get(f"{P}/jargon/{{jargon_id}}", _aiohttp_route(self._api_get_jargon))
+        app.router.add_get(f"{P}/statistics", _aiohttp_route(self._api_statistics))
+        app.router.add_get(f"{P}/chat-groups", _aiohttp_route(self._api_chat_groups))
+        app.router.add_get(f"{P}/known-chats", _aiohttp_route(self._api_known_chats))
+        app.router.add_get(f"{P}/settings", _aiohttp_route(self._api_get_settings))
+        app.router.add_get(f"{P}/pending-messages", _aiohttp_route(self._api_pending_messages))
+        app.router.add_get(f"{P}/prompts", _aiohttp_route(self._api_get_prompts))
+
+        # POST
+        app.router.add_post(f"{P}/expression/{{expr_id}}/check", _aiohttp_route(self._api_check_expression))
+        app.router.add_post(f"{P}/expression/{{expr_id}}", _aiohttp_route(self._api_delete_expression))
+        app.router.add_post(f"{P}/expression/{{expr_id}}/edit", _aiohttp_route(self._api_edit_expression))
+        app.router.add_post(f"{P}/jargon/{{jargon_id}}/meaning", _aiohttp_route(self._api_update_jargon_meaning))
+        app.router.add_post(f"{P}/jargon/{{jargon_id}}", _aiohttp_route(self._api_delete_jargon))
+        app.router.add_post(f"{P}/jargon/{{jargon_id}}/check", _aiohttp_route(self._api_check_jargon))
+        app.router.add_post(f"{P}/trigger-learn", _aiohttp_route(self._api_trigger_learn))
+        app.router.add_post(f"{P}/settings", _aiohttp_route(self._api_update_settings))
+        app.router.add_post(f"{P}/prompts", _aiohttp_route(self._api_save_prompts))
+
+        async def _run():
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+            logger.info(f"[SL] self-hosted API server started on http://{host}:{port}")
+
+        asyncio.ensure_future(_run())

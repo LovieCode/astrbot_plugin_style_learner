@@ -1,7 +1,5 @@
-import random
 import time
-from difflib import SequenceMatcher
-from typing import Any, Callable
+from collections.abc import Callable
 
 from astrbot.api import logger
 
@@ -172,7 +170,6 @@ class ExpressionLearner:
         return learnt
 
     def _build_chat_str(self, messages: list[dict]) -> str:
-        """构建匿名可读消息，不同发送者用 A/B/C... 标签，bot 用 SELF"""
         sender_map: dict[str, str] = {}
         next_label = ord("A")
         lines = []
@@ -187,6 +184,17 @@ class ExpressionLearner:
                     next_label += 1
                 label = sender_map[sender_name]
             text = msg.get("text", "")
+            images = msg.get("images", [])
+            if images:
+                captions = [
+                    img.get("caption") if isinstance(img, dict) else None
+                    for img in images
+                ]
+                captions = [c for c in captions if c]
+                if captions:
+                    text += " [图片描述: " + "; ".join(captions) + "]"
+                else:
+                    text += text and " [图片]" or "[图片]"
             lines.append(f"[{i + 1}] {label}说 {text}")
         return "\n".join(lines)
 

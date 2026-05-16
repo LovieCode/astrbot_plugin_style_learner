@@ -82,13 +82,23 @@ class Database:
                 role TEXT NOT NULL,
                 sender_name TEXT NOT NULL DEFAULT '',
                 text TEXT NOT NULL,
+                images TEXT NOT NULL DEFAULT '',
                 timestamp REAL NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_msg_buffer_chat ON message_buffer(chat_id);
+
+            CREATE TABLE IF NOT EXISTS image_captions (
+                url TEXT PRIMARY KEY,
+                caption TEXT NOT NULL,
+                created_at REAL NOT NULL DEFAULT 0
+            );
         """)
         self._migrate_add_column(
             "message_buffer", "sender_name", "TEXT NOT NULL DEFAULT ''"
+        )
+        self._migrate_add_column(
+            "message_buffer", "images", "TEXT NOT NULL DEFAULT ''"
         )
         self._migrate_add_column("jargons", "rejected", "INTEGER DEFAULT 0")
 
@@ -530,13 +540,17 @@ class Database:
     def save_buffered_messages(self, chat_id: str, messages: list[dict]):
         self.conn.execute("DELETE FROM message_buffer WHERE chat_id=?", (chat_id,))
         for msg in messages:
+            images_json = json.dumps(
+                msg.get("images", []), ensure_ascii=False
+            )
             self.conn.execute(
-                "INSERT INTO message_buffer (chat_id, role, sender_name, text, timestamp) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO message_buffer (chat_id, role, sender_name, text, images, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     chat_id,
                     msg.get("role", ""),
                     msg.get("sender_name", ""),
                     msg.get("text", ""),
+                    images_json,
                     msg.get("time", 0.0),
                 ),
             )
@@ -544,18 +558,24 @@ class Database:
 
     def load_buffered_messages(self, chat_id: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT role, sender_name, text, timestamp FROM message_buffer WHERE chat_id=? ORDER BY timestamp",
+            "SELECT role, sender_name, text, images, timestamp FROM message_buffer WHERE chat_id=? ORDER BY timestamp",
             (chat_id,),
         ).fetchall()
-        return [
-            {
+        result = []
+        for r in rows:
+            msg = {
                 "role": r["role"],
                 "sender_name": r["sender_name"],
                 "text": r["text"],
                 "time": r["timestamp"],
             }
-            for r in rows
-        ]
+            if r["images"]:
+                try:
+                    msg["images"] = json.loads(r["images"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(msg)
+        return result
 
     def get_all_buffered_chat_ids(self) -> list[str]:
         rows = self.conn.execute(
@@ -566,6 +586,25 @@ class Database:
     def clear_buffered_messages(self, chat_id: str):
         self.conn.execute("DELETE FROM message_buffer WHERE chat_id=?", (chat_id,))
         self.conn.commit()
+
+    # ── Image captions cache ──
+
+    def save_image_caption(self, url: str, caption: str):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO image_captions (url, caption, created_at) VALUES (?, ?, ?)",
+            (url, caption, time.time()),
+        )
+        self.conn.commit()
+
+    def get_image_caption(self, url: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT caption FROM image_captions WHERE url=?", (url,)
+        ).fetchone()
+        return row["caption"] if row else None
+
+    def get_all_image_captions(self) -> dict[str, str]:
+        rows = self.conn.execute("SELECT url, caption FROM image_captions").fetchall()
+        return {r["url"]: r["caption"] for r in rows}
 
 
 _db: Database | None = None

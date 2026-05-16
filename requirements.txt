@@ -1,0 +1,4 @@
+# astrbot_plugin_style_learner 依赖
+# 所有依赖均由 AstrBot 核心提供，无需额外安装。
+# 若使用旧版 AstrBot（无内嵌 WebUI），自建 API server 依赖 aiohttp：
+# aiohttp>=3.9

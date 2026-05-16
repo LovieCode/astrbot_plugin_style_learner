@@ -2,8 +2,6 @@ import asyncio
 import json
 import time
 from collections import deque
-from pathlib import Path
-from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -11,17 +9,16 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.filter.event_message_type import EventMessageType
 
+from .api import ApiRouter
+from .auto_check import ExpressionAutoCheckTask
 from .expression_reflector import ExpressionReflector
 from .jargon_explainer import JargonExplainer
 from .jargon_miner import JargonMiner
 from .learner import ExpressionLearner
 from .models import get_db
+from .prompt_manager import get_prompt
 from .recorder import MessageRecorder
 from .selector import ExpressionSelector
-from .utils import filter_text
-from .prompt_manager import get_prompt
-from .api import ApiRouter
-from .auto_check import ExpressionAutoCheckTask
 
 
 @register(
@@ -53,7 +50,7 @@ class StyleLearnerPlugin(Star):
         self._cron_jobs: list[str] = []
 
     async def initialize(self):
-        logger.info("StyleLearner: initializing...")
+        logger.info("[SL] initializing...")
         cfg = await self._get_config()
         self._bot_name = cfg.get("bot_name", "").strip() or self._bot_name
         # 如果未手动配置，尝试从平台获取 display_name 作为回退
@@ -132,23 +129,24 @@ class StyleLearnerPlugin(Star):
             self._recent_messages[cid] = buf
         if self._recent_messages:
             total = sum(len(v) for v in self._recent_messages.values())
-            logger.info(f"StyleLearner: seeded recent messages for {len(self._recent_messages)} chats ({total} msgs)")
+            logger.info(f"[SL] seeded recent messages | chats={len(self._recent_messages)} msgs={total}")
         self.recorder.on_learning_ready(self._on_learning_ready)
-        # 根据注入模式开关 LLM 工具
         injection_mode = cfg.get("injection_mode", "append")
         if injection_mode == "append":
             try:
                 self.context.deactivate_llm_tool("get_conversation_style")
                 self.context.deactivate_llm_tool("get_jargon_meaning")
-                logger.info(
-                    "StyleLearner: injection_mode=append, deactivated LLM tools"
-                )
+                logger.info("[SL] injection_mode=append, deactivated LLM tools")
             except Exception as e:
-                logger.warning(f"StyleLearner: failed to deactivate tools: {e}")
+                logger.warning(f"[SL] failed to deactivate tools: {e}")
 
         await self._register_cron()
         await self._register_reflector_cron()
-        ApiRouter(self).register()
+        try:
+            ApiRouter(self).register()
+        except Exception as e:
+            logger.info(f"[SL] built-in WebUI unavailable, starting self-hosted API: {e}")
+            ApiRouter(self).start_self_hosted()
         # 修复已存在的配置中 expression_groups 类型错误（string → list）
         if isinstance(self.config, dict) and isinstance(
             self.config.get("expression_groups"), str
@@ -159,10 +157,15 @@ class StyleLearnerPlugin(Star):
                 )
                 if hasattr(self.config, "save_config"):
                     self.config.save_config()
-                logger.info("StyleLearner: fixed expression_groups type in config")
+                logger.info("[SL] fixed expression_groups type in config")
             except Exception:
                 self.config["expression_groups"] = []
-        logger.info("StyleLearner: initialized successfully")
+        # 从 DB 恢复图片描述缓存（重启不丢）
+        db = get_db()
+        self._image_captions = db.get_all_image_captions()
+        if self._image_captions:
+            logger.info(f"[SL] restored {len(self._image_captions)} image captions from DB")
+        logger.info("[SL] initialized successfully")
 
     async def _get_config(self) -> dict:
         defaults = {
@@ -230,41 +233,33 @@ class StyleLearnerPlugin(Star):
             model_override = cfg.get("llm_model_override", "")
 
         async def call_llm(prompt: str, system_prompt: str = "") -> str | None:
-            logger.info(
-                f"StyleLearner LLM caller ({task}): attempting to get provider..."
-            )
+            logger.info(f"[SL] LLM({task}) | attempting to get provider...")
             provider = self.context.get_using_provider()
             if model_override:
                 try:
                     override = self.context.get_provider_by_id(model_override)
                     if override:
                         provider = override
-                        logger.info(
-                            f"StyleLearner LLM caller ({task}): using overridden provider {model_override}"
-                        )
+                        logger.info(f"[SL] LLM({task}) | using overridden provider {model_override}")
                 except Exception as e:
-                    logger.error(
-                        f"StyleLearner LLM caller ({task}): get_provider_by_id failed: {e}"
-                    )
+                    logger.error(f"[SL] LLM({task}) | get_provider_by_id failed: {e}")
             if not provider:
                 providers = self.context.get_all_providers()
                 if not providers:
                     msg = "ERROR: 没有找到任何 LLM Provider，请在 AstrBot 中至少配置一个模型"
-                    logger.error(f"StyleLearner LLM caller ({task}): {msg}")
+                    logger.error(f"[SL] LLM({task}) | {msg}")
                     return msg
                 provider = providers[0]
-                logger.info(
-                    f"StyleLearner LLM caller ({task}): fallback to first provider"
-                )
+                logger.info(f"[SL] LLM({task}) | fallback to first provider")
             try:
-                logger.info(f"StyleLearner LLM caller ({task}): calling LLM...")
+                logger.info(f"[SL] LLM({task}) | calling LLM...")
                 messages = [{"role": "user", "content": prompt}]
                 resp = await provider.text_chat(
                     system_prompt=system_prompt
                     or "你是一个有用的助手。请严格按要求的格式输出。",
                     contexts=messages,
                 )
-                logger.info(f"StyleLearner LLM caller ({task}): LLM response received")
+                logger.info(f"[SL] LLM({task}) | response received")
                 if isinstance(resp, tuple) and len(resp) > 0:
                     resp = resp[0]
                 if hasattr(resp, "completion_text"):
@@ -274,7 +269,7 @@ class StyleLearnerPlugin(Star):
                 return str(resp)
             except Exception as e:
                 msg = f"ERROR: LLM 调用异常 - {e}"
-                logger.error(f"StyleLearner LLM caller ({task}): {e}")
+                logger.error(f"[SL] LLM({task}) | {e}")
                 return msg
 
         return call_llm
@@ -285,7 +280,7 @@ class StyleLearnerPlugin(Star):
         try:
             cron = self.context.cron_manager
             if cron is None:
-                logger.warning("Cron manager unavailable, will try again later")
+                logger.warning("[SL] cron manager unavailable")
                 return
             job = await cron.add_basic_job(
                 name="style_learner_tick",
@@ -297,11 +292,9 @@ class StyleLearnerPlugin(Star):
             )
             self._cron_jobs.append(job.job_id)
             self._cron_registered = True
-            logger.info("StyleLearner: cron job registered")
+            logger.info("[SL] cron job registered")
         except Exception as e:
-            logger.warning(
-                f"StyleLearner: cron registration failed (non-critical): {e}"
-            )
+            logger.warning(f"[SL] cron registration failed: {e}")
 
     async def _register_reflector_cron(self):
         if self._reflector_cron_registered or not self.reflector:
@@ -320,9 +313,9 @@ class StyleLearnerPlugin(Star):
             )
             self._cron_jobs.append(job.job_id)
             self._reflector_cron_registered = True
-            logger.info("StyleLearner: reflector cron registered")
+            logger.info("[SL] reflector cron registered")
         except Exception as e:
-            logger.warning(f"StyleLearner: reflector cron registration failed: {e}")
+            logger.warning(f"[SL] reflector cron registration failed: {e}")
 
     async def _on_tick(self):
         if not self.recorder:
@@ -330,6 +323,7 @@ class StyleLearnerPlugin(Star):
         for chat_id in self.recorder.get_pending_chat_ids():
             messages = self.recorder.force_trigger(chat_id)
             if messages:
+                logger.debug(f"[SL] ⏰ cron tick triggered learning | chat={chat_id} msgs={len(messages)}")
                 await self._run_learning(chat_id, messages)
 
     async def _on_reflector_tick(self):
@@ -340,7 +334,7 @@ class StyleLearnerPlugin(Star):
             if ask_text and self.reflector._operator_chat_id:
                 await self._send_admin_message(ask_text)
         except Exception as e:
-            logger.error(f"Reflector tick error: {e}")
+            logger.error(f"[SL] reflector tick error: {e}")
 
     async def _send_admin_message(self, text: str):
         """向管理员发送私聊消息"""
@@ -354,11 +348,11 @@ class StyleLearnerPlugin(Star):
             if target:
                 platform.send_message(target, text)
         except Exception as e:
-            logger.warning(f"Failed to send admin message: {e}")
+            logger.warning(f"[SL] failed to send admin message: {e}")
 
     def _on_learning_ready(self, chat_id: str, messages: list[dict]):
         import asyncio
-
+        logger.debug(f"[SL] 📚 learning triggered (threshold met) | chat={chat_id} msgs={len(messages)}")
         asyncio.create_task(self._run_learning(chat_id, messages))
 
     def _build_chat_observe_info(self, chat_id: str) -> str:
@@ -405,10 +399,14 @@ class StyleLearnerPlugin(Star):
             prov_id = bot_cfg.get("provider_settings", {}).get(
                 "default_image_caption_provider_id", ""
             )
-            if not prov_id:
-                return
-            provider = self.context.get_provider_by_id(prov_id)
+            provider = None
+            if prov_id:
+                provider = self.context.get_provider_by_id(prov_id)
+            # 回退：未配置专用图片描述 provider 时，使用当前主 provider
             if not provider:
+                provider = self.context.get_using_provider()
+            if not provider:
+                logger.debug("[SL] image caption: no provider available")
                 return
             prompt = bot_cfg.get("provider_settings", {}).get(
                 "image_caption_prompt", "Please describe the image using Chinese."
@@ -425,32 +423,39 @@ class StyleLearnerPlugin(Star):
                     if caption:
                         self._image_captions[img_url] = caption
                         img_info["caption"] = caption
-                        logger.info(
-                            f"StyleLearner: image caption generated for {img_url[:60]}..."
-                        )
+                        get_db().save_image_caption(img_url, caption)
+                        logger.info(f"[SL] image caption generated | url={img_url[:60]}...")
                 except Exception as e:
-                    logger.warning(
-                        f"StyleLearner: image caption failed: {e}"
-                    )
+                    logger.warning(f"[SL] image caption failed: {e}")
         except Exception as e:
-            logger.warning(f"StyleLearner: image caption setup failed: {e}")
+            logger.warning(f"[SL] image caption setup failed: {e}")
 
     async def _run_learning(self, chat_id: str, messages: list[dict]) -> list[dict]:
         """执行学习，返回本次学到的新条目列表"""
         cfg = await self._get_config()
         enabled = cfg.get("enable_expression_learning", True)
         if not enabled or not self.learner:
-            logger.warning(
-                f"StyleLearner: learning skipped, enabled={enabled}, learner={self.learner is not None}"
-            )
+            logger.warning(f"[SL] learning skipped | enabled={enabled} learner_ready={self.learner is not None}")
             return []
+        # 学习前补全图片描述：收集所有无描述的图片，批量生成
+        pending = []
+        for m in messages:
+            for img in (m.get("images") or []):
+                if not isinstance(img, dict):
+                    continue
+                url = img.get("url", "")
+                if url and url != "[图片]" and url not in self._image_captions:
+                    pending.append(img)
+        if pending:
+            logger.debug(
+                f"[SL] pre-learning caption gen | chat={chat_id} pending={len(pending)}"
+            )
+            await self._generate_image_captions(pending)
         enable_jargon = cfg.get("enable_jargon_mining", True)
         items = await self.learner.learn_and_store(
             messages, chat_id, self._bot_name, enable_jargon
         )
-        logger.info(
-            f"StyleLearner: learning done for {chat_id}, got {len(items)} items"
-        )
+        logger.info(f"[SL] learning done | chat={chat_id} items={len(items)}")
         return items
 
     # ── Main hooks ──
@@ -466,6 +471,10 @@ class StyleLearnerPlugin(Star):
         now = time.time()
         event.set_extra("_msg_arrival_ts", now)
         self._last_message_ts[umo] = now
+        logger.debug(
+            f"[SL] 📩 on_message | umo={umo} text={len(user_text)}ch "
+            f"imgs={len(images)} ts={now:.3f}"
+        )
         if not self.recorder:
             return
         sender_name = event.get_sender_name() or ""
@@ -483,6 +492,10 @@ class StyleLearnerPlugin(Star):
         if chat_name and chat_name != umo:
             get_db().cache_chat_name(umo, chat_name)
         self.recorder.record(umo, "user", user_text, sender_name=sender_name, images=images)
+        logger.debug(
+            f"[SL] 📝 recorded msg | umo={umo} sender={sender_name} "
+            f"text_len={len(user_text)} imgs={len(images)}"
+        )
         if umo not in self._recent_messages:
             self._recent_messages[umo] = deque(maxlen=200)
         msg_entry = {
@@ -507,9 +520,20 @@ class StyleLearnerPlugin(Star):
     async def on_llm_request(self, event: AstrMessageEvent, req):
         umo = event.unified_msg_origin or ""
         user_text = event.message_str or ""
-        if not user_text.strip():
-            return
         chat_id = umo
+        # 图片由 AstrBot 核心在 build_main_agent 中自动处理（提取→压缩→req.image_urls 或描述）
+        # 纯图片消息也需走 hook，确保风格/工具/guard 注入生效
+        if not user_text.strip():
+            msg_images = self._extract_images(event)
+            if msg_images:
+                placeholder = f"[用户发送了 {len(msg_images)} 张图片]"
+                req.extra_user_content_parts.append(
+                    TextPart(text=placeholder).mark_as_temp()
+                )
+                logger.debug(
+                    f"[SL] 🖼️ image placeholder injected | umo={chat_id} "
+                    f"count={len(msg_images)}"
+                )
         cfg = await self._get_config()
         injection_mode = cfg.get("injection_mode", "append")
         checked_only = cfg.get("expression_checked_only", False)
@@ -522,23 +546,22 @@ class StyleLearnerPlugin(Star):
             event.set_extra("_msg_arrival_ts", arrival_ts)
 
         # 防抖 + 半句话保护
-        #  1) 有更新消息到达 → 跳过
-        #  2) 消息太新（< debounce 秒）→ 补眠等连发到齐
+        #  有更新消息到达 → 跳过本次注入
         debounce = cfg.get("debounce_seconds", 0)
         if debounce > 0:
             last_msg = self._last_message_ts.get(chat_id, 0.0)
             if last_msg > arrival_ts:
-                logger.debug(f"StyleLearner: debounce skip (newer msg) for {chat_id}")
-                event.clear_result()
+                logger.debug(
+                    f"[SL] ⏭️ debounce skip (newer msg) | umo={chat_id}"
+                )
                 return
-            # 没有更新消息但消息太新 → 用户可能还在敲字
             age = time.time() - last_msg
             if age < debounce:
-                await asyncio.sleep(debounce - age)
-                if self._last_message_ts.get(chat_id, 0.0) > arrival_ts:
-                    logger.debug(f"StyleLearner: debounce skip (post-sleep) for {chat_id}")
-                    event.clear_result()
-                    return
+                logger.debug(
+                    f"[SL] ⏭️ debounce skip (too new) | umo={chat_id} "
+                    f"age={age:.1f}s < {debounce}s"
+                )
+                return
 
         # 平滑：连续两次 LLM 调用之间至少间隔 smooth_seconds
         smooth = cfg.get("smooth_seconds", 0)
@@ -548,29 +571,32 @@ class StyleLearnerPlugin(Star):
                 elapsed = time.time() - last_llm
                 if elapsed < smooth:
                     logger.debug(
-                        f"StyleLearner: smooth skip for {chat_id} "
-                        f"({elapsed:.1f}s < {smooth}s)"
+                        f"[SL] ⏭️ smooth skip | umo={chat_id} "
+                        f"elapsed={elapsed:.1f}s < {smooth}s"
                     )
-                    event.clear_result()
                     return
         self._last_llm_time[chat_id] = time.time()
 
+        logger.debug(
+            f"[SL] 🔧 on_llm_request | umo={chat_id} "
+            f"mode={injection_mode} sel={selection_mode} "
+            f"max_turns={cfg.get('max_context_turns', 0)} "
+            f"ctx_msgs={cfg.get('context_recent_messages_count', 0)}"
+        )
+
         if not self.selector or not self.explainer:
-            logger.warning(
-                "StyleLearner on_llm_request: selector or explainer not initialized"
-            )
+            logger.warning("[SL] selector or explainer not initialized")
             return
         if injection_mode not in ("append", "both"):
-            logger.info(
-                f"StyleLearner on_llm_request: injection_mode={injection_mode}, skipping"
-            )
+            logger.info(f"[SL] skip | injection_mode={injection_mode}")
+            return
             return
         # 裁剪对话历史：保留最近 N 轮 user+assistant 对话
         # style injection 已注入到 extra_user_content_parts，过期的历史对话冗余
         max_turns = cfg.get("max_context_turns", 0)
         if max_turns == 0:
             req.contexts.clear()
-            logger.debug(f"StyleLearner: cleared all history for {chat_id}")
+            logger.debug(f"[SL] 🗑️ cleared all history | umo={chat_id}")
         elif max_turns > 0 and len(req.contexts) > 0:
             user_count = 0
             cutoff = 0
@@ -583,8 +609,8 @@ class StyleLearnerPlugin(Star):
             if cutoff > 0:
                 req.contexts = req.contexts[cutoff:]
                 logger.debug(
-                    f"StyleLearner: trimmed history to last {max_turns} turns "
-                    f"({len(req.contexts)} msgs) for {chat_id}"
+                    f"[SL] 📐 trimmed history | umo={chat_id} "
+                    f"keep={len(req.contexts)}msgs max_turns={max_turns}"
                 )
 
         # 匹配黑话
@@ -604,10 +630,10 @@ class StyleLearnerPlugin(Star):
         if hint:
             req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
             logger.info(
-                f"StyleLearner on_llm_request: injected hint ({len(hint)} chars) for {chat_id}"
+                f"[SL] 💉 hint injected | umo={chat_id} hint_len={len(hint)} "
+                f"jargons={len(jargon_list)}"
             )
         else:
-            # 检查 DB 中是否有数据可供诊断
             db = get_db()
             expr_count = db.conn.execute(
                 "SELECT COUNT(*) as cnt FROM expressions WHERE (rejected=0 OR rejected IS NULL)"
@@ -616,9 +642,9 @@ class StyleLearnerPlugin(Star):
                 "SELECT COUNT(*) as cnt FROM jargons"
             ).fetchone()["cnt"]
             logger.info(
-                f"StyleLearner on_llm_request: no hint for {chat_id} "
-                f"(DB: {expr_count} expressions, {jargon_count} jargons, "
-                f"injection_mode={injection_mode}, selection_mode={selection_mode})"
+                f"[SL] ⚠️ no hint | umo={chat_id} "
+                f"DB(expr={expr_count}, jargon={jargon_count}) "
+                f"mode={injection_mode} sel={selection_mode}"
             )
 
         # 注入最近 N 条聊天消息作为上下文（放在最后，确保在用户消息尾部）
@@ -627,7 +653,7 @@ class StyleLearnerPlugin(Star):
             recent = list(self._recent_messages[chat_id])[-ctx_count:]
             if recent:
                 lines = [
-                    f"你是群聊中的一员。以下是最新的聊天记录，"
+                    "你是群聊中的一员。以下是最新的聊天记录，"
                     "请根据上下文判断是否需要回复。\n"
                 ]
                 for m in recent:
@@ -649,12 +675,13 @@ class StyleLearnerPlugin(Star):
                     TextPart(text="\n".join(lines)).mark_as_temp()
                 )
                 logger.info(
-                    f"StyleLearner: injected {len(recent)} recent msgs as context for {chat_id}"
+                    f"[SL] 📋 context injected | umo={chat_id} "
+                    f"recent_msgs={len(recent)}"
                 )
-
         # 工具指令双端注入：系统提示 + 用户消息尾部
         _tool_hint = (
-            "- 你只能用 send_message_to_user 工具向用户发送消息。"
+            "- 你只能用 send_message_to_user 工具向用户发送消息"
+            "（参数格式：{'messages': [{'type': 'plain', 'text': '要发送的消息'}]}），"
             "如果无需回复，不要使用工具也不要输出任何文本。"
         )
         if _tool_hint not in req.system_prompt:
@@ -662,24 +689,44 @@ class StyleLearnerPlugin(Star):
         req.extra_user_content_parts.append(
             TextPart(text=_tool_hint).mark_as_temp()
         )
+        event.set_extra("_guard_tool_expected", True)
+        logger.debug(
+            f"[SL] 🛡️ guard armed | umo={chat_id} "
+            f"tool_expected=True"
+        )
+
+    @filter.on_llm_tool_respond()
+    async def on_tool_respond(self, event: AstrMessageEvent, tool, tool_args, tool_result):
+        if tool.name == "send_message_to_user":
+            event.set_extra("_tool_sent_message", True)
+            logger.debug(
+                f"[SL] 🔨 tool sent | umo={event.unified_msg_origin} "
+                f"tool={tool.name} args_keys={list(tool_args.keys()) if isinstance(tool_args, dict) else '?'}"
+            )
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, response):
         umo = event.unified_msg_origin or ""
         if not self.recorder:
             return
-        text = ""
         # Guard：标记 LLM 是否通过 send_message_to_user 工具发送了消息
         tool_sent = hasattr(response, "tools_call_name") and "send_message_to_user" in (
             response.tools_call_name or []
         )
+        ct = (response.completion_text or "").strip()
+
+        flags = {}
         if tool_sent:
             event.set_extra("_tool_sent_message", True)
-
-        # Guard：标记 LLM 直接输出了文本而非通过工具发送 → 视为心里话
-        ct = (response.completion_text or "").strip()
+            flags["tool_sent"] = True
         if ct and not tool_sent:
             event.set_extra("_llm_heart_words", True)
+            flags["heart_words"] = True
+
+        logger.debug(
+            f"[SL] 📤 on_llm_response | umo={umo} "
+            f"text_len={len(ct)} flags={flags}"
+        )
 
         # 记录到对话历史。关掉 guard 时直接文本也记录，否则只记工具发送的消息
         guard_on = self.config.get("guard_enabled", True) if isinstance(self.config, dict) else True
@@ -696,23 +743,45 @@ class StyleLearnerPlugin(Star):
 
     @filter.on_decorating_result(priority=9999)
     async def on_guard_result(self, event: AstrMessageEvent):
-        """内容守卫：在一切 on_decorating_result handler 之前运行。
-        - 如果 LLM 使用了 send_message_to_user 工具 → 剩余文本是心里话，清除
-        - 如果 LLM 直接输出了文本（没用工具）→ 那也是心里话，清除"""
         cfg = await self._get_config()
         if not cfg.get("guard_enabled", True):
             return
+        result = event.get_result()
+        if not result or not result.chain:
+            return
+
+        guard_expected = event.get_extra("_guard_tool_expected")
         tool_sent = event.get_extra("_tool_sent_message")
         heart_words = event.get_extra("_llm_heart_words")
-        if tool_sent or heart_words:
-            result = event.get_result()
-            if result and result.chain:
+        plain = (result.get_plain_text() or "").strip()
+        chain_types = [type(c).__name__ for c in result.chain]
+
+        if guard_expected:
+            if tool_sent:
                 result.chain.clear()
+                logger.debug(
+                    f"[SL] 🛡️ guard: cleared (tool sent) | "
+                    f"umo={event.unified_msg_origin} chain={chain_types}"
+                )
+            elif plain:
+                result.chain.clear()
+                event.stop_event()
+                logger.debug(
+                    f"[SL] 🛡️ guard: blocked heart words | "
+                    f"umo={event.unified_msg_origin} text_preview={plain[:80]}"
+                )
+            else:
+                logger.debug(
+                    f"[SL] 🛡️ guard: pass (empty chain, intermediate yield) | "
+                    f"umo={event.unified_msg_origin} chain={chain_types}"
+                )
+        elif tool_sent or heart_words:
+            result.chain.clear()
             event.stop_event()
             reason = "tool" if tool_sent else "heart_words"
             logger.debug(
-                f"Guard: cleared remaining chain "
-                f"({reason} for {event.unified_msg_origin})"
+                f"[SL] 🛡️ guard: blocked ({reason}, fallback) | "
+                f"umo={event.unified_msg_origin} chain={chain_types}"
             )
 
     # ── Commands ──
@@ -804,7 +873,7 @@ class StyleLearnerPlugin(Star):
         return "\n".join(lines)
 
     async def terminate(self):
-        logger.info("StyleLearner: terminating...")
+        logger.info("[SL] terminating...")
         if self.auto_check:
             self.auto_check.stop()
         cron = getattr(self.context, "cron_manager", None)
@@ -813,7 +882,5 @@ class StyleLearnerPlugin(Star):
                 try:
                     await cron.delete_job(job_id)
                 except Exception as e:
-                    logger.warning(
-                        f"StyleLearner: failed to delete cron job {job_id}: {e}"
-                    )
+                    logger.warning(f"[SL] failed to delete cron job {job_id}: {e}")
         self._cron_jobs.clear()
