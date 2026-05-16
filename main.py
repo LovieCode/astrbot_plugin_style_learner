@@ -548,6 +548,10 @@ class StyleLearnerPlugin(Star):
         # 防抖 + 半句话保护
         #  有更新消息到达 → 跳过本次注入
         debounce = cfg.get("debounce_seconds", 0)
+        try:
+            debounce = float(debounce)
+        except (TypeError, ValueError):
+            debounce = 0.0
         if debounce > 0:
             last_msg = self._last_message_ts.get(chat_id, 0.0)
             if last_msg > arrival_ts:
@@ -565,6 +569,10 @@ class StyleLearnerPlugin(Star):
 
         # 平滑：连续两次 LLM 调用之间至少间隔 smooth_seconds
         smooth = cfg.get("smooth_seconds", 0)
+        try:
+            smooth = float(smooth)
+        except (TypeError, ValueError):
+            smooth = 0.0
         if smooth > 0:
             last_llm = self._last_llm_time.get(chat_id, 0.0)
             if last_llm > 0:

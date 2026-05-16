@@ -102,6 +102,16 @@ _DEFAULT_PROMPTS = {
 }}
 """,
 
+    "inference_batch": """请推断以下黑话/缩写/俚语的含义。对每个词条，根据其出现的上下文，推断其含义。如果信息不足无法推断，请设置 "no_info": true。
+
+{items}
+
+以 JSON 数组格式输出（content 与输入一致）：
+[
+  {{"content": "词条内容", "meaning": "含义说明", "no_info": false}}
+]
+""",
+
     "compare": """推断结果1（基于上下文）:
 {inference1}
 
@@ -184,6 +194,13 @@ _PROMPT_META = {
             {"name": "{contexts}", "desc": "该词条出现的上下文（多行原文拼接）"},
         ],
     },
+    "inference_batch": {
+        "name": "黑话批量推断 Prompt",
+        "description": "一次推断多条黑话含义",
+        "variables": [
+            {"name": "{items}", "desc": "待推断词条列表，每条含词条内容和上下文"},
+        ],
+    },
     "compare": {
         "name": "黑话对比 Prompt",
         "description": "比较两个推断结果判断是否为黑话",
@@ -240,7 +257,7 @@ def get_all_prompts() -> list[dict]:
     """获取所有 Prompt 列表（含默认值和自定义值、元信息）"""
     db = get_db()
     result = []
-    for key in ["learn", "selection", "inference", "compare", "check", "summarize", "style"]:
+    for key in ["learn", "selection", "inference", "inference_batch", "compare", "check", "summarize", "style"]:
         meta = _PROMPT_META.get(key, {})
         default = _DEFAULT_PROMPTS.get(key, "")
         custom = db.get_setting(f"prompt_{key}")

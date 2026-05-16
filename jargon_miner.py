@@ -1,8 +1,7 @@
 import json
 import re
-import time
 from collections import OrderedDict
-from typing import Any, Callable
+from collections.abc import Callable
 
 from astrbot.api import logger
 
@@ -10,8 +9,7 @@ from .models import get_db
 from .prompt_manager import get_prompt
 from .utils import filter_text
 
-
-INFERENCE_THRESHOLDS = [2, 4, 8, 12, 24, 60, 100]
+INFERENCE_THRESHOLDS = [2, 3, 5, 8, 13, 21, 34]
 
 
 def should_infer(jargon: dict) -> bool:
@@ -20,6 +18,8 @@ def should_infer(jargon: dict) -> bool:
     count = jargon.get("count", 0) or 0
     last = jargon.get("last_inference_count", 0) or 0
     if count <= last:
+        return False
+    if count - last < 2:
         return False
     for t in INFERENCE_THRESHOLDS:
         if count >= t > last:
@@ -32,9 +32,14 @@ class JargonMiner:
         self._llm_caller = llm_caller
         self._cache_limit = 50
         self._cache: OrderedDict[str, None] = OrderedDict()
+        db = get_db()
+        cached = db.get_setting("jargon_cache", [])
+        if isinstance(cached, list):
+            for k in cached[-self._cache_limit :]:
+                if isinstance(k, str) and k.strip():
+                    self._cache[k.strip()] = None
 
     def _add_to_cache(self, content: str) -> None:
-        """将提取到的黑话加入 LRU 缓存"""
         if not content:
             return
         key = content.strip()
@@ -46,6 +51,8 @@ class JargonMiner:
             self._cache[key] = None
             if len(self._cache) > self._cache_limit:
                 self._cache.popitem(last=False)
+        db = get_db()
+        db.set_setting("jargon_cache", list(self._cache.keys()))
 
     def get_cached_jargons(self) -> list[str]:
         """获取缓存中的所有黑话列表"""
@@ -95,6 +102,7 @@ class JargonMiner:
         if not entries:
             return
         db = get_db()
+        pending_infer: list[dict] = []
         for entry in entries:
             content = entry.get("content", "").strip()
             if not content or len(content) <= 1:
@@ -123,52 +131,56 @@ class JargonMiner:
             if existed:
                 jargon = db.get_jargon_by_content(content)
                 if jargon and should_infer(jargon):
-                    await self._infer(jargon)
+                    pending_infer.append(jargon)
+        if pending_infer:
+            await self._batch_infer(pending_infer)
 
-    async def _infer(self, jargon: dict):
+    async def _batch_infer(self, jargons: list[dict]):
         db = get_db()
-        content = jargon["content"]
-        raw = jargon.get("raw_contexts", "[]")
-        try:
-            contexts = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            contexts = []
-        if not contexts:
-            return
-        context_text = "\n".join(contexts[-5:])
-        prompt = get_prompt("inference").format(
-            content=content,
-            contexts=context_text,
-        )
+        lines = []
+        for j in jargons:
+            content = j["content"]
+            raw = j.get("raw_contexts", "[]")
+            try:
+                contexts = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                contexts = []
+            ctx_text = "\n".join(contexts[-5:]) if contexts else "（无上下文）"
+            lines.append(f"- 词条: {content}\n  上下文: {ctx_text}")
+        items_text = "\n".join(lines)
+        prompt = get_prompt("inference_batch").format(items=items_text)
         try:
             resp = await self._llm_caller(prompt)
         except Exception as e:
-            logger.error(f"Jargon inference LLM call failed: {e}")
+            logger.error(f"Jargon batch inference LLM call failed: {e}")
             return
         if not resp:
             return
-        infer = self._parse_json(resp)
-        if not infer:
+        results = self._parse_json_array(resp)
+        if not results:
             return
-        if infer.get("no_info") or not infer.get("meaning", "").strip():
-            db.conn.execute(
-                "UPDATE jargons SET last_inference_count=? WHERE id=?",
-                (jargon["count"], jargon["id"]),
-            )
+        content_to_jargon = {j["content"]: j for j in jargons}
+        for item in results:
+            c = item.get("content", "").strip()
+            if not c or c not in content_to_jargon:
+                continue
+            jargon = content_to_jargon[c]
+            count = jargon.get("count", 0) or 0
+            if item.get("no_info") or not item.get("meaning", "").strip():
+                db.conn.execute(
+                    "UPDATE jargons SET last_inference_count=? WHERE id=?",
+                    (count, jargon["id"]),
+                )
+            else:
+                db.update_jargon_meaning(
+                    jargon["id"], item["meaning"].strip(), is_jargon=True
+                )
+                db.conn.execute(
+                    "UPDATE jargons SET last_inference_count=?, is_complete=? WHERE id=?",
+                    (count, 1 if count >= 20 else 0, jargon["id"]),
+                )
+                logger.info(f"Jargon [{c}]: {item['meaning'].strip()}")
             db.conn.commit()
-            return
-        has_meaning = True
-        db.update_jargon_meaning(jargon["id"], infer.get("meaning", ""), is_jargon=True)
-        db.conn.execute(
-            "UPDATE jargons SET last_inference_count=?, is_complete=? WHERE id=?",
-            (
-                jargon["count"],
-                1 if (jargon.get("count", 0) or 0) >= 20 else 0,
-                jargon["id"],
-            ),
-        )
-        db.conn.commit()
-        logger.info(f"Jargon [{content}]: {infer.get('meaning', '')}")
 
     def _parse_json(self, text: str) -> dict | None:
         text = text.strip()
@@ -177,5 +189,18 @@ class JargonMiner:
             text = m.group(0)
         try:
             return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    def _parse_json_array(self, text: str) -> list[dict] | None:
+        text = text.strip()
+        m = re.search(r"\[.*\]", text, re.DOTALL)
+        if m:
+            text = m.group(0)
+        try:
+            result = json.loads(text)
+            if isinstance(result, list):
+                return result
+            return None
         except json.JSONDecodeError:
             return None
