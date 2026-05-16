@@ -25,7 +25,7 @@ from .selector import ExpressionSelector
     "astrbot_plugin_style_learner",
     "AstrBot Community",
     "从群聊中学习表达方式与黑话，按情绪分类注入回复风格。",
-    "v1.0.0",
+    "v1.1.1",
     "",
 )
 class StyleLearnerPlugin(Star):
