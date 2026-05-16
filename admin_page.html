@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Style Learner 管理</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.5 system-ui,sans-serif;background:#f5f5f5;color:#333}
+header{background:#4a6cf7;color:#fff;padding:12px 20px}
+header h1{font-size:18px}
+nav{margin-top:8px;display:flex;gap:4px}
+nav button{padding:6px 16px;border:none;border-radius:4px 4px 0 0;cursor:pointer;font-size:13px;background:rgba(255,255,255,.2);color:#fff}
+nav button.active{background:#fff;color:#4a6cf7}
+main{padding:16px;max-width:960px;margin:0 auto}
+.tab{display:none}
+.tab.active{display:block}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.card{background:#fff;border-radius:6px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.card .label{font-size:12px;color:#888}
+.card .val{font-size:22px;font-weight:700;color:#4a6cf7}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.toolbar input,.toolbar select{padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:13px}
+.btn{padding:6px 16px;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+.btn-primary{background:#4a6cf7;color:#fff}
+.btn-danger{background:#e74c3c;color:#fff}
+.btn-success{background:#27ae60;color:#fff}
+.btn:hover{opacity:.85}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eee;font-size:13px}
+th{background:#f8f9fa;font-weight:600}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px}
+.badge-ok{background:#d4edda;color:#155724}
+.badge-no{background:#f8d7da;color:#721c24}
+.badge-pending{background:#fff3cd;color:#856404}
+.pagination{display:flex;gap:4px;margin-top:10px;justify-content:center}
+.pagination button{padding:4px 10px;border:1px solid #ddd;background:#fff;border-radius:4px;cursor:pointer;font-size:12px}
+.pagination button:hover{background:#4a6cf7;color:#fff}
+.config-grid{display:grid;grid-template-columns:1fr;gap:12px}
+.config-grid label{font-weight:600;margin-bottom:4px;display:block}
+.config-grid input,.config-grid select{padding:8px;border:1px solid #ddd;border-radius:4px;width:100%}
+.toast{position:fixed;top:16px;right:16px;padding:10px 20px;border-radius:6px;color:#fff;font-size:13px;z-index:999;display:none}
+.toast.ok{background:#27ae60}
+.toast.err{background:#e74c3c}
+@media(max-width:600px){.stats{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Style Learner 管理</h1>
+  <nav>
+    <button class="active" data-tab="stats">统计</button>
+    <button data-tab="expr">表达</button>
+    <button data-tab="jargon">黑话</button>
+    <button data-tab="settings">配置</button>
+  </nav>
+</header>
+<main>
+  <div id="stats" class="tab active">
+    <div id="stats-grid" class="stats"></div>
+    <button class="btn btn-primary" onclick="triggerLearn()">触发学习</button>
+    <span id="learn-msg" style="margin-left:8px;font-size:13px"></span>
+  </div>
+  <div id="expr" class="tab">
+    <div class="toolbar">
+      <select id="expr-emo" onchange="loadExpr(1)"><option value="">全部情绪</option><option>开心</option><option>惊讶</option><option>无奈</option><option>嘲讽</option><option>鼓励</option><option>生气</option><option>悲伤</option><option>撒娇</option><option>认真</option><option>好奇</option><option>困惑</option><option>恐惧</option><option>嫌弃</option><option>得意</option><option>尴尬</option><option>期待</option><option>neutral</option></select>
+      <select id="expr-status" onchange="loadExpr(1)"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已拒绝</option></select>
+      <input id="expr-search" placeholder="搜索..." style="width:160px" onkeyup="loadExpr(1)">
+    </div>
+    <table><thead><tr><th>ID</th><th>情绪</th><th>情境</th><th>表达</th><th>次数</th><th>状态</th></tr></thead><tbody id="expr-body"></tbody></table>
+    <div id="expr-pager" class="pagination"></div>
+  </div>
+  <div id="jargon" class="tab">
+    <div class="toolbar">
+      <input id="jargon-search" placeholder="搜索黑话..." onkeyup="loadJargon(1)">
+    </div>
+    <table><thead><tr><th>ID</th><th>内容</th><th>含义</th><th>次数</th><th>状态</th></tr></thead><tbody id="jargon-body"></tbody></table>
+    <div id="jargon-pager" class="pagination"></div>
+  </div>
+  <div id="settings" class="tab">
+    <div class="config-grid" id="config-grid"></div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="saveConfig()">保存配置</button>
+  </div>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+const BASE='/astrbot_plugin_style_learner';
+let exprPage=1,jargonPage=1;
+
+function toast(msg,ok){ var e=document.getElementById('toast');e.textContent=msg;e.className='toast '+(ok?'ok':'err');e.style.display='block';setTimeout(function(){e.style.display='none'},2000)}
+
+// tabs
+Array.from(document.querySelectorAll('nav button')).forEach(function(b){b.onclick=function(){document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active')});document.querySelectorAll('nav button').forEach(function(b){b.classList.remove('active')});this.classList.add('active');document.getElementById(this.dataset.tab).classList.add('active');if(this.dataset.tab=='stats')loadStats();if(this.dataset.tab=='expr')loadExpr(1);if(this.dataset.tab=='jargon')loadJargon(1);if(this.dataset.tab=='settings')loadConfig()}});
+
+// stats
+async function loadStats(){var r=await fetch(BASE+'/statistics');var d=(await r.json()).data;var g=document.getElementById('stats-grid');g.innerHTML='';var items=[['总表达',d.total_expressions],['已审核',d.checked_expressions],['已拒绝',d.rejected_expressions],['黑话',d.total_jargons],['有含义',d.jargons_with_meaning],['群组数',d.chat_group_count]];items.forEach(function(p){g.innerHTML+='<div class="card"><div class="label">'+p[0]+'</div><div class="val">'+p[1]+'</div></div>'})}
+
+// expressions
+async function loadExpr(p){exprPage=p;var e=document.getElementById('expr-emo').value,s=document.getElementById('expr-status').value,q=document.getElementById('expr-search').value;var u=BASE+'/expressions?page='+p+'&page_size=15';if(e)u+='&emotion='+e;if(s)u+='&status='+s;if(q)u+='&search='+encodeURIComponent(q);var r=await fetch(u),d=(await r.json()).data;var b='';d.items.forEach(function(x){var st='<span class="badge badge-pending">待审核</span>';if(x.checked&&!x.rejected)st='<span class="badge badge-ok">通过</span>';if(x.rejected)st='<span class="badge badge-no">拒绝</span>';b+='<tr><td>'+x.id+'</td><td>'+x.emotion+'</td><td>'+x.situation+'</td><td>'+x.style+'</td><td>'+x.count+'</td><td>'+st+'</td></tr>'});document.getElementById('expr-body').innerHTML=b;var pg='';for(var i=1;i<=Math.ceil(d.total/15);i++)pg+='<button'+(i==exprPage?' style="background:#4a6cf7;color:#fff"':'')+' onclick="loadExpr('+i+')">'+i+'</button>';document.getElementById('expr-pager').innerHTML=pg}
+
+// jargons
+async function loadJargon(p){jargonPage=p;var q=document.getElementById('jargon-search').value;var u=BASE+'/jargons?page='+p+'&page_size=15';if(q)u+='&search='+encodeURIComponent(q);var r=await fetch(u),d=(await r.json()).data;var b='';d.items.forEach(function(x){var st='<span class="badge badge-pending">-</span>';if(x.is_complete)st='<span class="badge badge-ok">有含义</span>';b+='<tr><td>'+x.id+'</td><td>'+x.content+'</td><td>'+(x.meaning||'-')+'</td><td>'+x.count+'</td><td>'+st+'</td></tr>'});document.getElementById('jargon-body').innerHTML=b;var pg='';for(var i=1;i<=Math.ceil(d.total/15);i++)pg+='<button'+(i==jargonPage?' style="background:#4a6cf7;color:#fff"':'')+' onclick="loadJargon('+i+')">'+i+'</button>';document.getElementById('jargon-pager').innerHTML=pg}
+
+// trigger learn
+async function triggerLearn(){document.getElementById('learn-msg').textContent='学习中...';var r=await fetch(BASE+'/trigger-learn',{method:'POST'});var d=await r.json();document.getElementById('learn-msg').textContent=d.message||'';if(d.success)loadStats();toast(d.message,d.success)}
+
+// config
+async function loadConfig(){var r=await fetch(BASE+'/settings'),d=(await r.json()).data;var g=document.getElementById('config-grid');g.innerHTML='';var order=['enable_expression_learning','enable_jargon_mining','injection_mode','selection_mode','min_messages_for_learning','learning_interval_minutes','expression_checked_only','all_global_jargon','all_global_expressions','guard_enabled','debounce_seconds','smooth_seconds','max_context_turns','context_recent_messages_count','expression_auto_check_enabled','expression_auto_check_interval','expression_auto_check_count'];var labels={enable_expression_learning:'启用表达学习',enable_jargon_mining:'启用黑话挖掘',injection_mode:'注入模式',selection_mode:'选择模式',min_messages_for_learning:'最少学习消息数',learning_interval_minutes:'学习间隔(分钟)',expression_checked_only:'仅已审核',all_global_jargon:'全局黑话',all_global_expressions:'全局表达',guard_enabled:'Guard 开关',debounce_seconds:'防抖(秒)',smooth_seconds:'平滑(秒)',max_context_turns:'最大历史轮次',context_recent_messages_count:'最近消息数',expression_auto_check_enabled:'自动审核',expression_auto_check_interval:'自动审核间隔(秒)',expression_auto_check_count:'自动审核条数'};order.forEach(function(k){var v=d[k]===undefined?'':d[k],t='text';if(typeof v==='boolean')t='bool';if(k==='injection_mode')t='select-inj';if(k==='selection_mode')t='select-sel';g.innerHTML+=renderField(k,labels[k]||k,v,t)})}
+
+function renderField(key,label,value,type){var inp='';if(type==='bool')inp='<select data-key="'+key+'"><option value="true"'+(value?' selected':'')+'>是</option><option value="false"'+(value?'':' selected')+'>否</option></select>';else if(type==='select-inj')inp='<select data-key="'+key+'"><option value="append"'+(value=='append'?' selected':'')+'>append</option><option value="both"'+(value=='both'?' selected':'')+'>both</option></select>';else if(type==='select-sel')inp='<select data-key="'+key+'"><option value="classic"'+(value=='classic'?' selected':'')+'>classic</option><option value="random"'+(value=='random'?' selected':'')+'>random</option></select>';else inp='<input type="'+type+'" data-key="'+key+'" value="'+value+'">';return'<div><label>'+label+'</label>'+inp+'</div>'}
+
+async function saveConfig(){var o={};Array.from(document.querySelectorAll('#config-grid [data-key]')).forEach(function(e){var v=e.value,k=e.dataset.key;if(v==='true')v=true;if(v==='false')v=false;if(['min_messages_for_learning','learning_interval_minutes','debounce_seconds','smooth_seconds','max_context_turns','context_recent_messages_count','expression_auto_check_interval','expression_auto_check_count'].indexOf(k)>=0)v=Number(v);o[k]=v});var r=await fetch(BASE+'/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});var d=await r.json();toast(d.message||'保存成功',d.success)}
+
+loadStats();
+</script>
+</body>
+</html>

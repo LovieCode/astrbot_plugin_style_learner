@@ -382,7 +382,18 @@ class ApiRouter:
         set_prompt(key, value)
         return {"success": True, "message": f"Prompt '{key}' 已保存"}
 
-    # ── self-hosted server (旧版 AstrBot 兼容) ──
+    # ── 自建管理页面 ──
+
+    async def _serve_admin_page(self, request):
+        from pathlib import Path
+
+        from aiohttp import web
+
+        html_path = Path(__file__).parent / "admin_page.html"
+        try:
+            return web.FileResponse(html_path)
+        except Exception:
+            return web.Response(text="admin_page.html not found", status=404)
 
     def start_self_hosted(self, host="0.0.0.0", port=6187):
         from aiohttp import web
@@ -432,16 +443,8 @@ class ApiRouter:
         app.router.add_get(f"{P}/pending-messages", _aiohttp_route(self._api_pending_messages))
         app.router.add_get(f"{P}/prompts", _aiohttp_route(self._api_get_prompts))
 
-        # POST
-        app.router.add_post(f"{P}/expression/{{expr_id}}/check", _aiohttp_route(self._api_check_expression))
-        app.router.add_post(f"{P}/expression/{{expr_id}}", _aiohttp_route(self._api_delete_expression))
-        app.router.add_post(f"{P}/expression/{{expr_id}}/edit", _aiohttp_route(self._api_edit_expression))
-        app.router.add_post(f"{P}/jargon/{{jargon_id}}/meaning", _aiohttp_route(self._api_update_jargon_meaning))
-        app.router.add_post(f"{P}/jargon/{{jargon_id}}", _aiohttp_route(self._api_delete_jargon))
-        app.router.add_post(f"{P}/jargon/{{jargon_id}}/check", _aiohttp_route(self._api_check_jargon))
-        app.router.add_post(f"{P}/trigger-learn", _aiohttp_route(self._api_trigger_learn))
-        app.router.add_post(f"{P}/settings", _aiohttp_route(self._api_update_settings))
-        app.router.add_post(f"{P}/prompts", _aiohttp_route(self._api_save_prompts))
+        # 前端管理页面
+        app.router.add_get("/", self._serve_admin_page)
 
         async def _run():
             runner = web.AppRunner(app)
